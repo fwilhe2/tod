@@ -24,9 +24,10 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.05);
+const timer = new THREE.Timer();
+renderer.setAnimationLoop((time) => {
+  timer.update(time);
+  const dt = Math.min(timer.getDelta(), 0.05);
   if (game.state !== 'pause') {
     game.update(dt);
     world.update(dt, camera.position);
