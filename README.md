@@ -5,6 +5,8 @@ homage to the classic "type words to shoot zombies" arcade genre. Built with
 Three.js (WebGL) and Vite. No art or audio assets: every zombie, building, and
 sound effect is generated procedurally at runtime.
 
+![Screenshot of Gameplay](./gameplay.png)
+
 ## Story
 
 The canal city of **Porto Morto** has gone quiet. You are Agent **Verdana** of
