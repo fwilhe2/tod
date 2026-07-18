@@ -18,6 +18,11 @@ const SHADOW_MAT = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: t
 function rand(a, b) { return a + Math.random() * (b - a); }
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
+// Successive zombies cycle through these label heights so words on
+// overlapping zombies don't cover each other.
+const LABEL_HEIGHTS = [2.9, 3.6, 4.3];
+let labelSlot = 0;
+
 export class Zombie {
   constructor(word, x, z, speed, scale = 1, tint = null) {
     this.word = word;
@@ -104,7 +109,7 @@ export class Zombie {
     this.tex = new THREE.CanvasTexture(this.canvas);
     const mat = new THREE.SpriteMaterial({ map: this.tex, transparent: true, depthTest: false });
     this.label = new THREE.Sprite(mat);
-    this.label.position.set(0, 3.15, 0);
+    this.label.position.set(0, LABEL_HEIGHTS[labelSlot++ % LABEL_HEIGHTS.length], 0);
     this.label.renderOrder = 10;
     this.baseLabelW = w / 90;
     this.group.add(this.label);
@@ -117,7 +122,7 @@ export class Zombie {
     c.font = 'bold 58px "Courier New", monospace';
     c.textBaseline = 'middle';
     // backdrop
-    c.fillStyle = targeted ? 'rgba(10,14,8,0.85)' : 'rgba(4,6,12,0.65)';
+    c.fillStyle = targeted ? 'rgba(10,14,8,0.96)' : 'rgba(4,6,12,0.88)';
     c.fillRect(0, 8, cv.width, 68);
     if (targeted) {
       c.strokeStyle = 'rgba(255,212,121,0.9)';
