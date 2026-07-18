@@ -481,7 +481,7 @@ export class Game {
     for (let i = 0; i < n; i++) {
       const r = Math.random();
       const mat = new THREE.MeshBasicMaterial({
-        color: r < 0.45 ? 0x9c1818 : r < 0.75 ? 0x701010 : r < 0.9 ? 0xb42424 : 0x5c8a2a,
+        color: r < 0.45 ? 0x9c1818 : r < 0.75 ? 0x701010 : r < 0.9 ? 0xb42424 : 0x4a0b0b,
         transparent: true,
       });
       const m = new THREE.Mesh(GORE_GEO, mat);
