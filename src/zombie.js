@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 
-const SKIN = [0x9cc487, 0xa8c284, 0x8cc09c, 0xb4ca88, 0xa2d4a6];
-const CLOTH = [0x565478, 0x785858, 0x4a6a62, 0x6a5c48, 0x53688a, 0x74547a];
+// pallid, desaturated corpse tones — no healthy saturation
+const SKIN = [0x87927a, 0x7d8a68, 0x8e9a84, 0x707d5e, 0x939c7d];
+const CLOTH = [0x49443e, 0x3d4348, 0x51453a, 0x41483f, 0x3b3d4e, 0x564a44];
 
 const SHADOW_MAT = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4 });
-const TEETH_MAT = new THREE.MeshLambertMaterial({ color: 0xd8d2b0 });
+const BONE_MAT = new THREE.MeshLambertMaterial({ color: 0xc4bca8 });
 const SHADOW_GEO = new THREE.CircleGeometry(0.75, 20);
 
 // soft radial glow texture, shared by all eye glows
@@ -55,21 +56,34 @@ export class Zombie {
     this.t = rand(0, 10);
     this.scale = scale * (scale === 1 ? rand(0.92, 1.1) : 1);
     this.isBoss = scale > 2;
-    this.hunch = rand(0.16, 0.34);
     this.seed = rand(0, 100);
+
+    // every corpse reanimated a little differently
+    this.hunch = rand(0.32, 0.55);
+    this.pose = {
+      armMode: pick([0, 0, 1, 2]),   // 0: both arms reach; 1/2: left/right hangs dead
+      dragLeg: Math.random() < 0.5 ? 0 : 1,
+      headTilt: rand(0.2, 0.5) * (Math.random() < 0.5 ? -1 : 1),
+      twist: rand(-0.14, 0.14),      // permanent spine twist
+      gait: rand(0.85, 1.15),
+      reach: [rand(-0.35, 0.1), rand(-0.35, 0.1)], // uneven arm heights
+    };
+    this.twitchT = rand(1.5, 4);
+    this.twitchDur = 0;
+    this.twitchSign = 1;
 
     this.geos = [];
     this.mats = [];
 
     const skinColor = tint ?? pick(SKIN);
-    this.skinMat = this.mat(new THREE.MeshLambertMaterial({ color: skinColor, emissive: 0x2c3c24 }));
-    this.clothMat = this.mat(new THREE.MeshLambertMaterial({ color: pick(CLOTH), emissive: 0x181826, side: THREE.DoubleSide }));
-    this.woundMat = this.mat(new THREE.MeshLambertMaterial({ color: 0x6a1010, emissive: 0x300606 }));
-    const eyeColor = this.isBoss ? 0xff4030 : 0xffd24a;
+    this.skinMat = this.mat(new THREE.MeshLambertMaterial({ color: skinColor, emissive: 0x222c1e }));
+    this.clothMat = this.mat(new THREE.MeshLambertMaterial({ color: pick(CLOTH), emissive: 0x14141c, side: THREE.DoubleSide }));
+    this.woundMat = this.mat(new THREE.MeshLambertMaterial({ color: 0x521010, emissive: 0x260505 }));
+    const eyeColor = this.isBoss ? 0xff4030 : 0xc8d86a;
     this.eyeMat = this.mat(new THREE.MeshBasicMaterial({ color: eyeColor }));
     this.glowMat = this.mat(new THREE.SpriteMaterial({
       map: GLOW_TEX, color: eyeColor, transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: this.isBoss ? 0.85 : 0.6,
     }));
 
     const g = new THREE.Group();
@@ -103,94 +117,116 @@ export class Zombie {
   mesh(g, m) { return new THREE.Mesh(this.geo(g), m); }
 
   buildTorso(body) {
-    const pelvis = this.mesh(new THREE.SphereGeometry(0.36, 10, 8), this.clothMat);
-    pelvis.scale.set(1.1, 0.7, 0.85);
+    const pelvis = this.mesh(new THREE.SphereGeometry(0.34, 10, 8), this.clothMat);
+    pelvis.scale.set(1.05, 0.7, 0.8);
     pelvis.position.y = 0.05;
     body.add(pelvis);
 
     const torso = this.mesh(
-      lump(new THREE.CapsuleGeometry(0.4, 0.5, 6, 14), 0.05, this.seed),
+      lump(new THREE.CapsuleGeometry(0.38, 0.5, 6, 14), 0.05, this.seed),
       this.clothMat
     );
     torso.position.y = 0.62;
-    torso.scale.set(1.05, 1, 0.78);
+    torso.scale.set(1.0, 1, 0.72);
     torso.rotation.x = 0.1;
     body.add(torso);
 
-    // bloated gut poking out of the shirt
-    if (Math.random() < 0.6) {
-      const gut = this.mesh(lump(new THREE.SphereGeometry(0.3, 12, 10), 0.04, this.seed + 3), this.skinMat);
-      gut.position.set(rand(-0.06, 0.06), 0.32, 0.2);
-      gut.scale.set(1, 0.85, 0.7);
+    // sunken belly poking out of the shirt, on some
+    if (Math.random() < 0.45) {
+      const gut = this.mesh(lump(new THREE.SphereGeometry(0.24, 12, 10), 0.04, this.seed + 3), this.skinMat);
+      gut.position.set(rand(-0.06, 0.06), 0.3, 0.17);
+      gut.scale.set(0.95, 0.75, 0.6);
       body.add(gut);
     }
     // open wound
     if (Math.random() < 0.7) {
       const wound = this.mesh(lump(new THREE.SphereGeometry(0.15, 8, 6), 0.03, this.seed + 5), this.woundMat);
-      wound.position.set(rand(-0.3, 0.3), rand(0.4, 0.85), rand(0.2, 0.28));
+      wound.position.set(rand(-0.28, 0.28), rand(0.35, 0.85), rand(0.18, 0.26));
       wound.scale.set(1, rand(0.7, 1.4), 0.4);
       body.add(wound);
     }
+    // torn-open chest with exposed ribs, on some
+    if (Math.random() < 0.35) {
+      const rx = rand(-0.08, 0.08);
+      const patch = this.mesh(new THREE.BoxGeometry(0.34, 0.3, 0.05), this.woundMat);
+      patch.position.set(rx, 0.68, 0.24);
+      patch.rotation.x = 0.12;
+      body.add(patch);
+      for (let r = 0; r < 3; r++) {
+        const rib = this.mesh(new THREE.BoxGeometry(0.3, 0.028, 0.03), BONE_MAT);
+        rib.position.set(rx, 0.58 + r * 0.09, 0.27);
+        rib.rotation.x = 0.12;
+        body.add(rib);
+      }
+    }
 
-    const neck = this.mesh(new THREE.CylinderGeometry(0.11, 0.15, 0.2, 8), this.skinMat);
+    const neck = this.mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.2, 8), this.skinMat);
     neck.position.set(0, 1.15, 0.1);
-    neck.rotation.x = 0.3;
+    neck.rotation.x = 0.35;
     body.add(neck);
   }
 
   buildHead(body) {
     const head = new THREE.Group();
-    head.position.set(0, 1.32, 0.16);
-    head.rotation.x = 0.22;
-    head.rotation.z = rand(-0.28, 0.28);
+    head.position.set(0, 1.32, 0.18);
     body.add(head);
     this.head = head;
 
+    // gaunt, narrow skull
     const skull = this.mesh(
       lump(new THREE.SphereGeometry(0.3, 14, 12), 0.03, this.seed + 1),
       this.skinMat
     );
-    skull.scale.set(0.85, 1.0, 0.95);
+    skull.scale.set(0.76, 1.02, 0.9);
     head.add(skull);
 
-    const brow = this.mesh(new THREE.BoxGeometry(0.4, 0.08, 0.12, 3, 1, 1), this.skinMat);
-    brow.position.set(0, 0.1, 0.22);
-    brow.rotation.x = 0.25;
+    // heavy brow shadowing the eyes
+    const brow = this.mesh(new THREE.BoxGeometry(0.4, 0.09, 0.13, 3, 1, 1), this.skinMat);
+    brow.position.set(0, 0.08, 0.21);
+    brow.rotation.x = 0.35;
     head.add(brow);
 
-    const nose = this.mesh(new THREE.BoxGeometry(0.07, 0.11, 0.09), this.skinMat);
-    nose.position.set(0, -0.04, 0.28);
+    const nose = this.mesh(new THREE.BoxGeometry(0.06, 0.1, 0.08), this.skinMat);
+    nose.position.set(0, -0.05, 0.26);
     nose.rotation.x = 0.3;
     head.add(nose);
 
-    // upper teeth on the skull, lower on the swinging jaw
-    const upperTeeth = this.mesh(new THREE.BoxGeometry(0.18, 0.035, 0.03), TEETH_MAT);
-    upperTeeth.position.set(0, -0.15, 0.24);
+    // upper teeth on the skull, lower on the hanging jaw
+    const upperTeeth = this.mesh(new THREE.BoxGeometry(0.17, 0.035, 0.03), BONE_MAT);
+    upperTeeth.position.set(0, -0.15, 0.22);
     head.add(upperTeeth);
 
     const jawPivot = new THREE.Group();
     jawPivot.position.set(0, -0.12, 0.0);
     head.add(jawPivot);
     this.jaw = jawPivot;
-    const jaw = this.mesh(lump(new THREE.BoxGeometry(0.26, 0.12, 0.26, 3, 2, 3), 0.015, this.seed + 2), this.skinMat);
-    jaw.position.set(0, -0.06, 0.08);
+    const jaw = this.mesh(lump(new THREE.BoxGeometry(0.24, 0.11, 0.24, 3, 2, 3), 0.015, this.seed + 2), this.skinMat);
+    jaw.position.set(0, -0.06, 0.07);
     jawPivot.add(jaw);
-    const lowerTeeth = this.mesh(new THREE.BoxGeometry(0.16, 0.03, 0.025), TEETH_MAT);
-    lowerTeeth.position.set(0, -0.005, 0.19);
+    const lowerTeeth = this.mesh(new THREE.BoxGeometry(0.15, 0.03, 0.025), BONE_MAT);
+    lowerTeeth.position.set(0, -0.005, 0.17);
     jawPivot.add(lowerTeeth);
-    jawPivot.rotation.x = 0.4;
+    jawPivot.rotation.x = 0.55; // slack, hanging open
+
+    // dried blood around the mouth, on some — it fed recently
+    if (Math.random() < 0.5) {
+      const smear = this.mesh(new THREE.BoxGeometry(0.15, 0.07, 0.03), this.woundMat);
+      smear.position.set(rand(-0.04, 0.04), -0.02, 0.14);
+      smear.rotation.z = rand(-0.3, 0.3);
+      jawPivot.add(smear);
+    }
 
     for (const s of [-1, 1]) {
-      const socket = this.mesh(new THREE.SphereGeometry(0.07, 8, 6), this.woundMat);
-      socket.position.set(0.115 * s, 0.02, 0.22);
+      const socket = this.mesh(new THREE.SphereGeometry(0.075, 8, 6), this.woundMat);
+      socket.position.set(0.105 * s, 0.01, 0.19);
       socket.scale.z = 0.5;
       head.add(socket);
-      const eye = this.mesh(new THREE.SphereGeometry(0.042, 8, 6), this.eyeMat);
-      eye.position.set(0.115 * s, 0.02, 0.26);
+      const eye = this.mesh(new THREE.SphereGeometry(0.036, 8, 6), this.eyeMat);
+      eye.position.set(0.105 * s, 0.01, 0.23);
       head.add(eye);
       const glow = new THREE.Sprite(this.glowMat);
-      glow.position.set(0.115 * s, 0.02, 0.3);
-      glow.scale.setScalar(this.isBoss ? 0.55 : 0.32);
+      glow.position.set(0.105 * s, 0.01, 0.27);
+      glow.scale.setScalar(this.isBoss ? 0.5 : 0.2);
       head.add(glow);
     }
   }
@@ -198,45 +234,53 @@ export class Zombie {
   buildArms(body) {
     this.shoulders = [];
     this.elbows = [];
-    for (const s of [-1, 1]) {
+    // which arms hang limp vs. reach out
+    this.dangling = [this.pose.armMode === 1, this.pose.armMode === 2];
+    for (const [i, s] of [[0, -1], [1, 1]]) {
       const shoulder = new THREE.Group();
-      shoulder.position.set(0.48 * s, 0.98, 0.1);
-      shoulder.rotation.x = -Math.PI / 2 + rand(-0.25, 0.2);
-      shoulder.rotation.z = s * rand(-0.15, 0.1);
+      shoulder.position.set(0.46 * s, 0.96 + rand(-0.05, 0.02), 0.1); // uneven droop
+      shoulder.rotation.z = s * rand(-0.12, 0.15);
       body.add(shoulder);
       this.shoulders.push(shoulder);
 
       // torn sleeve upper arm, bare rotten forearm
-      const upper = this.mesh(lump(new THREE.CapsuleGeometry(0.095, 0.28, 4, 10), 0.02, this.seed + 6 + s), this.clothMat);
+      const upper = this.mesh(lump(new THREE.CapsuleGeometry(0.09, 0.28, 4, 10), 0.02, this.seed + 6 + s), this.clothMat);
       upper.position.y = -0.24;
       shoulder.add(upper);
 
       const elbow = new THREE.Group();
       elbow.position.y = -0.48;
-      elbow.rotation.x = rand(-0.55, -0.2);
       shoulder.add(elbow);
       this.elbows.push(elbow);
 
-      const forearm = this.mesh(lump(new THREE.CapsuleGeometry(0.075, 0.26, 4, 10), 0.02, this.seed + 8 + s), this.skinMat);
+      const forearm = this.mesh(lump(new THREE.CapsuleGeometry(0.07, 0.26, 4, 10), 0.02, this.seed + 8 + s), this.skinMat);
       forearm.position.y = -0.2;
       elbow.add(forearm);
 
-      // hand with curled clawing fingers
+      if (this.dangling[i]) {
+        shoulder.rotation.x = -0.15;
+        elbow.rotation.x = -0.12;
+      } else {
+        shoulder.rotation.x = -Math.PI / 2 + this.pose.reach[i];
+        elbow.rotation.x = rand(-0.4, -0.1);
+      }
+
+      // limp drooping claw of a hand
       const hand = new THREE.Group();
       hand.position.y = -0.4;
-      hand.rotation.x = rand(-0.5, -0.2);
+      hand.rotation.x = this.dangling[i] ? rand(-0.3, -0.1) : rand(-1.0, -0.6);
       elbow.add(hand);
-      const palm = this.mesh(new THREE.BoxGeometry(0.11, 0.13, 0.055), this.skinMat);
+      const palm = this.mesh(new THREE.BoxGeometry(0.1, 0.13, 0.05), this.skinMat);
       palm.position.y = -0.05;
       hand.add(palm);
       for (let f = 0; f < 4; f++) {
-        const finger = this.mesh(new THREE.CapsuleGeometry(0.017, 0.08, 2, 5), this.skinMat);
-        finger.position.set(-0.04 + f * 0.026, -0.15, 0.01 + (f % 2) * 0.012);
-        finger.rotation.x = rand(-1.1, -0.5);
+        const finger = this.mesh(new THREE.CapsuleGeometry(0.015, 0.08, 2, 5), this.skinMat);
+        finger.position.set(-0.036 + f * 0.024, -0.15, 0.01 + (f % 2) * 0.012);
+        finger.rotation.x = rand(-1.0, -0.4);
         hand.add(finger);
       }
-      const thumb = this.mesh(new THREE.CapsuleGeometry(0.018, 0.06, 2, 5), this.skinMat);
-      thumb.position.set(0.065 * s, -0.08, 0.02);
+      const thumb = this.mesh(new THREE.CapsuleGeometry(0.016, 0.06, 2, 5), this.skinMat);
+      thumb.position.set(0.06 * s, -0.08, 0.02);
       thumb.rotation.z = s * 0.9;
       hand.add(thumb);
     }
@@ -245,13 +289,13 @@ export class Zombie {
   buildLegs(body) {
     this.hips = [];
     this.knees = [];
-    for (const s of [-1, 1]) {
+    for (const [i, s] of [[0, -1], [1, 1]]) {
       const hip = new THREE.Group();
       hip.position.set(0.2 * s, 0.02, 0);
       body.add(hip);
       this.hips.push(hip);
 
-      const thigh = this.mesh(lump(new THREE.CapsuleGeometry(0.115, 0.3, 4, 10), 0.02, this.seed + 10 + s), this.clothMat);
+      const thigh = this.mesh(lump(new THREE.CapsuleGeometry(0.11, 0.3, 4, 10), 0.02, this.seed + 10 + s), this.clothMat);
       thigh.position.y = -0.26;
       hip.add(thigh);
 
@@ -263,12 +307,14 @@ export class Zombie {
 
       // one trouser leg torn off at random
       const shinMat = Math.random() < 0.4 ? this.skinMat : this.clothMat;
-      const shin = this.mesh(lump(new THREE.CapsuleGeometry(0.09, 0.28, 4, 10), 0.02, this.seed + 12 + s), shinMat);
+      const shin = this.mesh(lump(new THREE.CapsuleGeometry(0.085, 0.28, 4, 10), 0.02, this.seed + 12 + s), shinMat);
       shin.position.y = -0.22;
       knee.add(shin);
 
-      const foot = this.mesh(new THREE.BoxGeometry(0.13, 0.1, 0.3, 2, 1, 2), this.skinMat);
+      const foot = this.mesh(new THREE.BoxGeometry(0.12, 0.09, 0.28, 2, 1, 2), this.skinMat);
       foot.position.set(0, -0.47, 0.07);
+      // the dragging foot scuffs along toe-down
+      if (i === this.pose.dragLeg) foot.rotation.x = 0.3;
       knee.add(foot);
     }
   }
@@ -391,45 +437,71 @@ export class Zombie {
 
     switch (this.state) {
       case 'walk': {
-        const sp = this.speed;
+        // lurch: surge on each step instead of gliding (mean ≈ base speed)
+        const cad = (2.6 + this.speed * 2.4) * this.pose.gait;
+        const w = this.t * cad;
+        const surge = 0.5 + 0.85 * Math.abs(Math.sin(w));
+        const sp = this.speed * surge;
         g.position.x += toCam.x * sp * dt;
         g.position.z += toCam.z * sp * dt;
-        // drift toward center of street
+        // drift toward center of street, plus a drunken sideways stagger
         g.position.x += (camPos.x - g.position.x) * 0.06 * dt;
-        // shamble
-        const w = this.t * 6.2;
-        this.body.position.y = 1.05 + Math.abs(Math.sin(w)) * 0.09;
-        this.body.rotation.z = Math.sin(w * 0.5) * 0.09;
-        this.body.rotation.x = this.hunch + Math.sin(w) * 0.03;
-        this.hips[0].rotation.x = Math.sin(w) * 0.6;
-        this.hips[1].rotation.x = -Math.sin(w) * 0.6;
-        this.knees[0].rotation.x = 0.15 + Math.max(0, Math.sin(w + 1.6)) * 0.8;
-        this.knees[1].rotation.x = 0.15 + Math.max(0, -Math.sin(w + 1.6)) * 0.8;
-        this.shoulders[0].rotation.x = -Math.PI / 2 + Math.sin(w * 0.9) * 0.18;
-        this.shoulders[1].rotation.x = -Math.PI / 2 - Math.sin(w * 0.9) * 0.18;
-        this.elbows[0].rotation.x = -0.35 + Math.sin(w * 0.9 + 1) * 0.12;
-        this.elbows[1].rotation.x = -0.35 - Math.sin(w * 0.9 + 1) * 0.12;
-        this.head.rotation.z = Math.sin(w * 0.5 + this.seed) * 0.14;
-        this.jaw.rotation.x = 0.35 + Math.sin(this.t * 2.3 + this.seed) * 0.18;
+        g.position.x += Math.sin(this.t * 0.6 + this.seed) * 0.25 * dt;
+
+        // no lively bounce — a sagging dip on each step
+        this.body.position.y = 1.03 - Math.abs(Math.cos(w)) * 0.05;
+        this.body.rotation.x = this.hunch + Math.sin(w) * 0.06;
+        this.body.rotation.z = this.pose.twist + Math.sin(w * 0.5) * 0.1 + Math.sin(this.t * 0.7 + this.seed) * 0.06;
+        this.body.rotation.y = this.pose.twist * 0.8 + Math.sin(this.t * 0.5 + this.seed) * 0.05;
+
+        // one leg steps, the other stiffly drags behind
+        const a = 1 - this.pose.dragLeg, b = this.pose.dragLeg;
+        this.hips[a].rotation.x = Math.sin(w) * 0.5;
+        this.knees[a].rotation.x = 0.12 + Math.max(0, Math.sin(w + 1.7)) * 0.85;
+        this.hips[b].rotation.x = -Math.sin(w) * 0.18 - 0.12;
+        this.knees[b].rotation.x = 0.3;
+
+        for (const i of [0, 1]) {
+          if (this.dangling[i]) {
+            // dead arm swings passively
+            this.shoulders[i].rotation.x = -0.15 + Math.sin(w + i) * 0.09;
+            this.elbows[i].rotation.x = -0.12;
+          } else {
+            // reaching arm bobs limply
+            this.shoulders[i].rotation.x = -Math.PI / 2 + this.pose.reach[i] + Math.sin(w * 0.5 + i * 1.3) * 0.12;
+            this.elbows[i].rotation.x = -0.3 + Math.sin(w * 0.5 + i) * 0.1;
+          }
+        }
+
+        // head lolls, jaw hangs and works slowly
+        this.head.rotation.z = this.pose.headTilt + Math.sin(this.t * 0.9 + this.seed) * 0.16;
+        this.head.rotation.x = 0.24 + Math.sin(this.t * 0.6 + this.seed) * 0.1;
+        this.jaw.rotation.x = 0.55 + Math.sin(this.t * 1.7 + this.seed) * 0.2;
+
         if (dist < 2.7) this.setState('attack');
         break;
       }
       case 'attack': {
         // wind up then lunge
         const p = this.stateT;
-        this.jaw.rotation.x = Math.min(1.0, 0.4 + p * 2.5); // mouth gapes
         if (p < 0.35) {
-          this.body.rotation.x = this.hunch - p * 0.9; // rear back
-          this.shoulders[0].rotation.x = -Math.PI / 2 - p * 1.6; // arms rise
-          this.shoulders[1].rotation.x = -Math.PI / 2 - p * 1.6;
-          this.shoulders[0].rotation.z = -p * 0.8;
-          this.shoulders[1].rotation.z = p * 0.8;
+          this.body.rotation.x = this.hunch - p * 1.0;                // rear back
+          this.jaw.rotation.x = 0.55 + p * 1.6;                       // gape
+          for (const i of [0, 1]) {
+            this.shoulders[i].rotation.x = -Math.PI / 2 - p * 1.8;    // arms up
+            this.shoulders[i].rotation.z = (i === 0 ? -1 : 1) * p * 1.1; // spread wide
+          }
         } else if (p < 0.55) {
-          this.body.rotation.x = this.hunch - 0.31 + (p - 0.35) * 5.5; // lunge forward
-          this.shoulders[0].rotation.x = -Math.PI / 2 - 0.55 + (p - 0.35) * 6;
-          this.shoulders[1].rotation.x = -Math.PI / 2 - 0.55 + (p - 0.35) * 6;
+          const q = p - 0.35;
+          this.body.rotation.x = this.hunch - 0.35 + q * 5.5;         // lunge forward
+          this.jaw.rotation.x = Math.max(0.15, 1.11 - q * 4.5);       // jaw snaps shut
+          for (const i of [0, 1]) {
+            this.shoulders[i].rotation.x = -Math.PI / 2 - 0.63 + q * 5;
+            this.shoulders[i].rotation.z = (i === 0 ? -1 : 1) * Math.max(0.1, 0.385 - q * 1.5); // clamp inward
+          }
         } else {
           this.body.rotation.x = this.hunch;
+          this.jaw.rotation.x = 0.55;
           this.shoulders[0].rotation.z = 0;
           this.shoulders[1].rotation.z = 0;
           event = 'strike';
@@ -456,13 +528,14 @@ export class Zombie {
         this.body.rotation.x = this.hunch - Math.min(p * 3.2, Math.PI / 2); // topple backward
         g.position.x -= toCam.x * 2.5 * dt;
         g.position.z -= toCam.z * 2.5 * dt;
-        // limbs splay, knees buckle, jaw drops
+        // limbs splay, knees buckle, head lolls aside, jaw drops
         const s = Math.min(p * 2, 1);
         this.shoulders[0].rotation.z = -s * 1.2;
         this.shoulders[1].rotation.z = s * 1.2;
         this.knees[0].rotation.x = 0.15 + s * 1.1;
         this.knees[1].rotation.x = 0.15 + s * 0.8;
-        this.jaw.rotation.x = 0.4 + s * 0.7;
+        this.head.rotation.z = this.pose.headTilt + s * 0.6;
+        this.jaw.rotation.x = 0.55 + s * 0.6;
         if (p > 0.6) g.position.y -= dt * 2.2; // sink
         if (p > 1.3) this.dead = true;
         break;
@@ -470,20 +543,36 @@ export class Zombie {
       case 'idle': { // boss loiter
         const w = this.t * 1.6;
         this.body.position.y = 1.05 + Math.sin(w) * 0.06;
-        this.body.rotation.x = this.hunch * 0.6;
-        this.body.rotation.z = Math.sin(w * 0.7) * 0.05;
+        this.body.rotation.x = this.hunch * 0.7;
+        this.body.rotation.z = this.pose.twist + Math.sin(w * 0.7) * 0.05;
         this.shoulders[0].rotation.x = -Math.PI / 2 + Math.sin(w) * 0.1;
         this.shoulders[1].rotation.x = -Math.PI / 2 - Math.sin(w) * 0.1;
-        this.head.rotation.z = Math.sin(w * 0.4) * 0.08;
-        this.jaw.rotation.x = 0.3 + Math.sin(w * 1.3) * 0.12;
+        this.head.rotation.z = this.pose.headTilt * 0.5 + Math.sin(w * 0.4) * 0.1;
+        this.jaw.rotation.x = 0.4 + Math.sin(w * 1.3) * 0.15;
         break;
       }
       case 'stagger': {
-        this.body.rotation.x = this.hunch * 0.6 - 0.6 * Math.sin(Math.min(this.stateT / 0.5, 1) * Math.PI);
+        this.body.rotation.x = this.hunch * 0.7 - 0.6 * Math.sin(Math.min(this.stateT / 0.5, 1) * Math.PI);
         this.body.rotation.z = Math.sin(this.stateT * 22) * 0.08 * (1 - this.stateT / 0.5);
         this.jaw.rotation.x = 1.0;
         if (this.stateT >= 0.5) { this.body.rotation.z = 0; this.setState('idle'); }
         break;
+      }
+    }
+
+    // reanimated nerves: sudden head-snap / shoulder-jerk twitches
+    if (this.state === 'walk' || this.state === 'idle') {
+      this.twitchT -= dt;
+      if (this.twitchT <= 0) {
+        this.twitchT = rand(1.6, 4.5);
+        this.twitchDur = 0.2;
+        this.twitchSign = Math.random() < 0.5 ? -1 : 1;
+      }
+      if (this.twitchDur > 0) {
+        this.twitchDur -= dt;
+        const k = Math.sin(Math.max(this.twitchDur, 0) / 0.2 * Math.PI);
+        this.head.rotation.z += k * 0.45 * this.twitchSign;
+        this.shoulders[this.twitchSign < 0 ? 0 : 1].rotation.x += k * 0.4;
       }
     }
     return event;
