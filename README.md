@@ -23,6 +23,14 @@ about compound interest and the apocalypse.
   break your combo (and your accuracy grade).
 - Don't let them reach you — you have 5 hearts. A ghoul that lands a hit is
   knocked back and gets a fresh start on its word.
+- Every letter you land shoots a piece off — hands, arms, jaw — and the
+  final letter takes the head. Watch the canal: some of them wade out of it.
+- A rare **barista ghoul** (amber eyes, still carrying the cup) refunds one
+  heart when dropped.
+- Each district has its own weather — mist, blackout, blood moon, storm —
+  and the synth score gets busier the closer the horde shambles.
+- Idle on the title screen for a while and the game will play itself
+  (arcade attract mode — any key takes back the controls).
 - **Boss fight:** type his full doom-laden sentences before the amber timer
   runs out, or take a hit.
 - **Three endings**, decided by how you answer his final question — truthfully,
@@ -56,8 +64,15 @@ Requires Node 18+.
   rings and score popups per keystroke; canvas-texture word labels as
   billboards, vertex-animated canal water, window-lit facades from
   generated textures.
-- **Audio:** all WebAudio synthesis — layered gunshots that pitch up with
-  your combo, splats, panned zombie groans, thunder, a low-HP heartbeat,
-  boss roars, a generated convolution reverb, and a wind-drone-and-bell
-  ambience.
+- **Gameplay flourishes:** typed dismemberment (each letter strips a part,
+  the last pops the head; the boss loses his hat, arms, and jaw one phrase
+  at a time), ghouls that climb dripping out of the canal, five per-district
+  atmospheres crossfaded along the rail, bullet-time on wave-clear and
+  boss-final kills, a healing barista ghoul, and an idle-triggered attract
+  mode where the game demos itself.
+- **Audio:** all WebAudio synthesis — an adaptive four-layer score (sub
+  pulse, bass, creeping arpeggio, hats and dissonance) that follows how
+  close the horde is, layered gunshots that pitch up with your combo,
+  splats, panned zombie groans, thunder, a low-HP heartbeat, boss roars, a
+  generated convolution reverb, and a wind-drone-and-bell ambience.
 - **No trademarks:** all names, words, phrases, and story are original.

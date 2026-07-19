@@ -30,9 +30,15 @@ export class Game {
     this.camera = camera;
     this.sfx = sfx;
     this.gun = gun;
+    this.world = null;   // set by main.js, drives district moods
     this.fovKick = 0;
     this.groanT = 3;
     this.beatT = 0;
+    this.slowmo = 0;     // real seconds of bullet-time remaining
+    this.dangerAcc = 0;  // music-intensity poll timer
+    this.demo = false;   // attract mode: the game plays itself
+    this.titleIdle = 0;
+    this.autoT = 0;
 
     this.state = 'title'; // title|intro|playing|advance|bossintro|boss|question|ending|gameover|results|pause
     this.stateT = 0;
@@ -143,6 +149,7 @@ export class Game {
     this.score = 0; this.combo = 0; this.maxCombo = 0;
     this.hits = 0; this.misses = 0; this.typeTime = 0; this.coffees = 0;
     this.usedPhrases = [];
+    this.slowmo = 0;
     this.showScreen(null);
     this.hud.root.style.display = 'block';
     this.hud.bossui.style.display = 'none';
@@ -157,6 +164,7 @@ export class Game {
     this.spawned = 0;
     this.killed = 0;
     this.spawnTimer = 0.8;
+    this.world?.setMood(i);
     this.hud.wavelabel.textContent = `CANAL DISTRICT ${i + 1} / ${WAVES.length}`;
     this.banner(`AREA ${i + 1}`, i === 0 ? 'THEY CAN SMELL TYPOS' : '');
     this.sfx.waveChime();
@@ -189,6 +197,7 @@ export class Game {
     this.hud.bosshp.style.width = '100%';
     this.hud.phrasebox.style.display = 'block';
     this.hud.wavelabel.textContent = 'THE COUNTING HOUSE';
+    this.world?.setMood(5);
     this.sfx.bossRoar();
     this.nextPhrase();
     this.setState('boss');
@@ -238,6 +247,8 @@ export class Game {
     if (this.boss) {
       this.spawnGore(this.boss.headWorldPos(new THREE.Vector3()), 70, 2.2);
       this.spawnBloodPool(this.boss.group.position);
+      const skull = this.boss.decapitate();
+      if (skull) this.flingPart(skull, 2);
       this.boss.die();
     }
     this.sfx.kill();
@@ -276,6 +287,64 @@ export class Game {
     this.setState('gameover');
   }
 
+  // ---------------- attract mode ----------------
+  startDemo() {
+    this.demo = true;
+    this.autoT = 1;
+    $('demobadge').style.display = 'block';
+    this.startGame();
+  }
+
+  exitDemo() {
+    this.demo = false;
+    $('demobadge').style.display = 'none';
+    for (const z of this.zombies) z.dispose(this.scene);
+    this.zombies = [];
+    if (this.boss) { this.boss.dispose(this.scene); this.boss = null; }
+    this.target = null;
+    this.hud.root.style.display = 'none';
+    this.hud.bossui.style.display = 'none';
+    this.hud.phrasebox.style.display = 'none';
+    this.hud.questionbox.style.display = 'none';
+    this.hideBanner();
+    this.slowmo = 0;
+    this.titleIdle = 0;
+    this.sfx.setIntensity(0);
+    this.showScreen('title');
+    this.setState('title');
+  }
+
+  // the ghost of Agent Verdana types on: mostly accurate, occasionally sloppy
+  autoType() {
+    if (this.state === 'playing' || this.state === 'intro') {
+      let z = this.target;
+      if (z && (z.state === 'dying' || z.dead)) z = null;
+      if (!z) {
+        let bd = Infinity;
+        for (const c of this.zombies) {
+          if (c.state === 'dying') continue;
+          const d = c.group.position.distanceTo(this.camera.position);
+          if (d < bd) { bd = d; z = c; }
+        }
+      }
+      if (!z) return;
+      const correct = z.word[this.target === z ? z.progress : 0];
+      const ch = Math.random() < 0.04 ? 'qxjz'[Math.floor(Math.random() * 4)] : correct;
+      this.typeCombat(ch);
+    } else if (this.state === 'boss') {
+      const ch = this.phrase[this.phraseProgress];
+      if (ch) this.typeBoss(Math.random() < 0.02 ? 'q' : ch);
+    } else if (this.state === 'question') {
+      if (this.answerLock === -1) {
+        const i = Math.floor(Math.random() * QUESTION.answers.length);
+        this.typeAnswer(QUESTION.answers[i].text[0]);
+      } else {
+        const a = QUESTION.answers[this.answerLock];
+        this.typeAnswer(a.text[this.answerProgress]);
+      }
+    }
+  }
+
   continueGame() {
     // arcade continue: full HP, restart current fight
     this.coffees++;
@@ -296,6 +365,8 @@ export class Game {
   // ---------------- input ----------------
   onKey(e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (this.demo) { this.exitDemo(); return; } // any key reclaims the controls
+    this.titleIdle = 0;
 
     if (e.key === 'Escape') {
       if (this.state === 'pause') {
@@ -411,7 +482,14 @@ export class Game {
     this.sfx.shot(this.combo);
     this.gun.fire();
     this.spawnShell();
-    if (z) this.spawnBullet(z);
+    if (z) {
+      this.spawnBullet(z);
+      // every landed letter strips a part off a regular ghoul
+      if (!z.isBoss) {
+        const part = z.shed();
+        if (part) this.flingPart(part, 0.8);
+      }
+    }
   }
 
   registerMiss() {
@@ -430,16 +508,31 @@ export class Game {
     this.spawnRing(head);
     this.spawnPopup(`+${pts}`, head);
     this.fovKick = Math.min(this.fovKick + 2.5, 8);
+    // the last letter takes the head clean off
+    const skull = z.decapitate();
+    if (skull) this.flingPart(skull, 1.5);
+    if (z.special === 'coffee' && this.hp < MAX_HP) {
+      this.hp++;
+      this.sfx.heart();
+      this.spawnPopup('+♥', head, '#ff5a5a', 'rgba(255,60,60,0.9)');
+      this.updateHUD();
+    }
     z.die();
     this.killed++;
     if (this.target === z) this.target = null;
-    if (this.killed >= this.waveCount()) this.waveCleared();
+    if (this.killed >= this.waveCount()) {
+      this.slowmo = 0.9; // wave-clear finisher in bullet-time
+      this.waveCleared();
+    }
   }
 
   damageBoss() {
     this.bossHP--;
     this.sfx.bossHit();
     this.boss.setState('stagger');
+    // each finished phrase costs the Chancellor a piece: hat first, then arms, then jaw
+    const part = this.boss.shed();
+    if (part) this.flingPart(part, 1.4);
     this.hud.bosshp.style.width = `${(100 * this.bossHP) / this.bossMaxHP}%`;
     const head = this.boss.headWorldPos(new THREE.Vector3());
     this.spawnGore(head, 45, 1.6);
@@ -450,6 +543,7 @@ export class Game {
     this.shakeT = Math.max(this.shakeT, 0.3);
     this.score += 400;
     if (this.bossHP <= 0) {
+      this.slowmo = 1.2;
       this.sfx.bossRoar();
       this.startQuestion();
     } else {
@@ -472,15 +566,61 @@ export class Game {
     const w = WAVES[this.wave];
     const inUse = this.zombies.filter((z) => z.state !== 'dying').map((z) => z.word);
     const word = pickWord(w.tier, inUse);
-    const z = new Zombie(
-      word,
-      this.camera.position.x + rand(-7, 7),
-      this.baseZ - rand(26, 36),
-      rand(w.speed[0], w.speed[1]) * this.settings.speed
-    );
+    const coffee = this.wave >= 1 && this.hp < MAX_HP && Math.random() < 0.08;
+    const riser = !coffee && this.wave >= 1 && Math.random() < 0.35;
+    const speed = rand(w.speed[0], w.speed[1]) * this.settings.speed;
+    let z;
+    if (riser) {
+      // it comes up out of the canal, soaked dark
+      z = new Zombie(word, rand(13.5, 15.5), this.baseZ - rand(12, 24), speed, 1, 0x5c6a54);
+      z.beginRise();
+    } else {
+      z = new Zombie(
+        word,
+        this.camera.position.x + rand(-7, 7),
+        this.baseZ - rand(26, 36),
+        speed, 1, null, coffee ? 'coffee' : null
+      );
+    }
     this.scene.add(z.group);
     this.zombies.push(z);
     this.spawned++;
+  }
+
+  // rip a detached body part into the world as tumbling debris
+  flingPart(part, power = 1) {
+    const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+    part.getWorldPosition(pos);
+    part.getWorldQuaternion(quat);
+    part.getWorldScale(scl);
+    part.parent.remove(part);
+    part.position.copy(pos);
+    part.quaternion.copy(quat);
+    part.scale.copy(scl);
+    this.scene.add(part);
+    this.effects.push({
+      kind: 'limb', obj: part, life: 0, ttl: rand(0.9, 1.4), keepMats: true,
+      baseScale: scl.clone(), spin: rand(6, 15),
+      vel: new THREE.Vector3(rand(-2.5, 2.5) * power, rand(2, 4.5) * power, rand(-2.5, 2.5) * power),
+    });
+    this.spawnGore(pos, 4, 0.5);
+  }
+
+  spawnSplash(pos) {
+    this.sfx.splash();
+    for (let i = 0; i < 14; i++) {
+      const m = new THREE.Mesh(SPARK_GEO, new THREE.MeshBasicMaterial({
+        color: Math.random() < 0.5 ? 0x9fc0e8 : 0xd8ecff,
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      m.position.set(pos.x, -0.4, pos.z);
+      this.scene.add(m);
+      this.effects.push({
+        kind: 'spark', obj: m, life: 0, ttl: rand(0.35, 0.6),
+        vel: new THREE.Vector3(rand(-3, 3), rand(2, 5), rand(-3, 3)),
+      });
+    }
+    this.spawnRing(new THREE.Vector3(pos.x, -0.55, pos.z), 0x9fc0e8, true);
   }
 
   // glowing tracer round that flies from the muzzle to the target's head
@@ -533,18 +673,19 @@ export class Game {
     this.effects.push({ kind: 'shell', obj: m, life: 0, ttl: 0.9, vel, spin: rand(10, 22) });
   }
 
-  spawnRing(pos) {
+  spawnRing(pos, color = 0xffd479, flat = false) {
     const m = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({
-      color: 0xffd479, transparent: true, blending: THREE.AdditiveBlending,
+      color, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, side: THREE.DoubleSide,
     }));
     m.position.copy(pos);
-    m.lookAt(this.camera.position);
+    if (flat) m.rotation.x = -Math.PI / 2;
+    else m.lookAt(this.camera.position);
     this.scene.add(m);
     this.effects.push({ kind: 'ring', obj: m, life: 0, ttl: 0.35 });
   }
 
-  spawnPopup(text, pos) {
+  spawnPopup(text, pos, color = '#ffd479', glow = 'rgba(255,180,60,0.9)') {
     const cv = document.createElement('canvas');
     const c = cv.getContext('2d');
     c.font = 'bold 48px "Courier New", monospace';
@@ -552,9 +693,9 @@ export class Game {
     cv.height = 64;
     c.font = 'bold 48px "Courier New", monospace';
     c.textBaseline = 'middle';
-    c.shadowColor = 'rgba(255,180,60,0.9)';
+    c.shadowColor = glow;
     c.shadowBlur = 10;
-    c.fillStyle = '#ffd479';
+    c.fillStyle = color;
     c.fillText(text, 12, 32);
     const tex = new THREE.CanvasTexture(cv);
     const m = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -601,9 +742,52 @@ export class Game {
   }
 
   // ---------------- per-frame update ----------------
+  // main calls advance() with the real frame dt; bullet-time scales it here
+  advance(rawDt) {
+    this.slowmo = Math.max(0, this.slowmo - rawDt);
+    const dt = rawDt * (this.slowmo > 0 ? 0.25 : 1);
+    this.update(dt);
+    return dt;
+  }
+
   update(dt) {
     this.stateT += dt;
     this.time += dt;
+
+    // attract mode: start after idling on the title, play until interrupted
+    if (this.state === 'title' && !this.demo) {
+      this.titleIdle += dt;
+      if (this.titleIdle > 14) { this.titleIdle = 0; this.startDemo(); }
+    }
+    if (this.demo) {
+      this.autoT -= dt;
+      if (this.autoT <= 0) {
+        this.autoT = rand(0.1, 0.22);
+        this.autoType();
+      }
+      if (this.state === 'ending' && this.stateT > 5) this.showResults();
+      else if (this.state === 'results' && this.stateT > 7) this.exitDemo();
+      else if (this.state === 'gameover' && this.stateT > 4) this.exitDemo();
+    }
+
+    // adaptive score: intensity follows how close the horde is
+    this.dangerAcc -= dt;
+    if (this.dangerAcc <= 0) {
+      this.dangerAcc = 0.4;
+      let danger = 0;
+      if (this.state === 'boss') danger = 3;
+      else if (['playing', 'intro', 'advance'].includes(this.state)) {
+        danger = 1;
+        let nearest = Infinity;
+        for (const z of this.zombies) {
+          if (z.state === 'dying') continue;
+          nearest = Math.min(nearest, z.group.position.distanceTo(this.camera.position));
+        }
+        if (nearest < 7) danger = 3;
+        else if (nearest < 13) danger = 2;
+      }
+      this.sfx.setIntensity(danger);
+    }
 
     // effects always tick
     for (let i = this.effects.length - 1; i >= 0; i--) {
@@ -634,6 +818,17 @@ export class Game {
           fx.obj.position.y += 1.5 * dt;
           fx.obj.material.opacity = 1 - p * p;
           break;
+        case 'limb': // a shot-off body part tumbling through the night
+          fx.vel.y -= 11 * dt;
+          fx.obj.position.addScaledVector(fx.vel, dt);
+          fx.obj.rotation.x += fx.spin * dt;
+          fx.obj.rotation.y += fx.spin * 0.6 * dt;
+          if (fx.obj.position.y < 0.08) {
+            fx.obj.position.y = 0.08;
+            fx.vel.set(fx.vel.x * 0.4, Math.abs(fx.vel.y) > 1.5 ? -fx.vel.y * 0.25 : 0, fx.vel.z * 0.4);
+          }
+          if (p > 0.75) fx.obj.scale.copy(fx.baseScale).multiplyScalar(Math.max(0.001, 1 - (p - 0.75) / 0.25));
+          break;
         default: // gore chunks & blood pools
           if (fx.vel) {
             fx.vel.y -= 12 * dt;
@@ -646,9 +841,11 @@ export class Game {
       }
       if (fx.life >= fx.ttl) {
         this.scene.remove(fx.obj);
-        if (fx.ownGeo) fx.obj.geometry.dispose();
-        if (fx.ownMap) fx.obj.material.map.dispose();
-        fx.obj.material.dispose();
+        if (!fx.keepMats) { // limbs borrow their zombie's materials
+          if (fx.ownGeo) fx.obj.geometry.dispose();
+          if (fx.ownMap) fx.obj.material.map.dispose();
+          fx.obj.material?.dispose();
+        }
         this.effects.splice(i, 1);
       }
     }
@@ -757,6 +954,7 @@ export class Game {
     for (let i = this.zombies.length - 1; i >= 0; i--) {
       const z = this.zombies[i];
       const ev = z.update(dt, this.camera.position);
+      if (ev === 'splash') this.spawnSplash(z.group.position);
       if (ev === 'strike') {
         if (!harmless && (this.state === 'playing' || this.state === 'intro' || this.state === 'advance')) {
           this.damagePlayer();

@@ -46,8 +46,9 @@ const LABEL_HEIGHTS = [2.9, 3.6, 4.3];
 let labelSlot = 0;
 
 export class Zombie {
-  constructor(word, x, z, speed, scale = 1, tint = null) {
+  constructor(word, x, z, speed, scale = 1, tint = null, special = null) {
     this.word = word;
+    this.special = special; // 'coffee': amber-eyed barista ghoul, heals on kill
     this.progress = 0;
     this.speed = speed;
     this.state = 'walk'; // walk | attack | knock | dying | idle | stagger
@@ -79,7 +80,7 @@ export class Zombie {
     this.skinMat = this.mat(new THREE.MeshLambertMaterial({ color: skinColor, emissive: 0x222c1e }));
     this.clothMat = this.mat(new THREE.MeshLambertMaterial({ color: pick(CLOTH), emissive: 0x14141c, side: THREE.DoubleSide }));
     this.woundMat = this.mat(new THREE.MeshLambertMaterial({ color: 0x521010, emissive: 0x260505 }));
-    const eyeColor = this.isBoss ? 0xff4030 : 0xc8d86a;
+    const eyeColor = this.isBoss ? 0xff4030 : special === 'coffee' ? 0xffc040 : 0xc8d86a;
     this.eyeMat = this.mat(new THREE.MeshBasicMaterial({ color: eyeColor }));
     this.glowMat = this.mat(new THREE.SpriteMaterial({
       map: GLOW_TEX, color: eyeColor, transparent: true,
@@ -102,6 +103,8 @@ export class Zombie {
     this.buildLegs(body);
     this.buildRags(body);
     if (this.isBoss) this.buildHat();
+    if (special === 'coffee') this.buildCup();
+    this.buildShedQueue();
 
     const shadow = new THREE.Mesh(SHADOW_GEO, SHADOW_MAT);
     shadow.rotation.x = -Math.PI / 2;
@@ -234,6 +237,7 @@ export class Zombie {
   buildArms(body) {
     this.shoulders = [];
     this.elbows = [];
+    this.hands = [];
     // which arms hang limp vs. reach out
     this.dangling = [this.pose.armMode === 1, this.pose.armMode === 2];
     for (const [i, s] of [[0, -1], [1, 1]]) {
@@ -270,6 +274,7 @@ export class Zombie {
       hand.position.y = -0.4;
       hand.rotation.x = this.dangling[i] ? rand(-0.3, -0.1) : rand(-1.0, -0.6);
       elbow.add(hand);
+      this.hands.push(hand);
       const palm = this.mesh(new THREE.BoxGeometry(0.1, 0.13, 0.05), this.skinMat);
       palm.position.y = -0.05;
       hand.add(palm);
@@ -338,15 +343,77 @@ export class Zombie {
     // The Chancellor dresses for the occasion
     const hatMat = this.mat(new THREE.MeshLambertMaterial({ color: 0x14121a }));
     const bandMat = this.mat(new THREE.MeshBasicMaterial({ color: 0xffc040 }));
+    const hat = new THREE.Group();
     const crown = this.mesh(new THREE.CylinderGeometry(0.21, 0.23, 0.36, 12), hatMat);
     crown.position.set(0, 0.42, -0.02);
-    this.head.add(crown);
+    hat.add(crown);
     const brim = this.mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.03, 14), hatMat);
     brim.position.set(0, 0.25, -0.02);
-    this.head.add(brim);
+    hat.add(brim);
     const band = this.mesh(new THREE.CylinderGeometry(0.225, 0.235, 0.07, 12), bandMat);
     band.position.set(0, 0.3, -0.02);
-    this.head.add(band);
+    hat.add(band);
+    this.head.add(hat);
+    this.hat = hat;
+  }
+
+  buildCup() {
+    // the barista ghoul still carries a fresh cup
+    const cupMat = this.mat(new THREE.MeshLambertMaterial({ color: 0xe8e2d4, emissive: 0x2a2822 }));
+    const hand = this.hands[this.dangling[0] ? 1 : 0];
+    const cup = this.mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.1, 10), cupMat);
+    cup.position.set(0, -0.12, 0.06);
+    hand.add(cup);
+    const steamMat = this.mat(new THREE.SpriteMaterial({
+      map: GLOW_TEX, color: 0xfff4e0, transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.35,
+    }));
+    const steam = new THREE.Sprite(steamMat);
+    steam.position.set(0, -0.02, 0.06);
+    steam.scale.setScalar(0.2);
+    hand.add(steam);
+  }
+
+  // ---------- typed dismemberment ----------
+  // Every landed letter can strip a part; the last letter takes the head.
+  buildShedQueue() {
+    const parts = [this.hands[0], this.hands[1], this.elbows[0], this.elbows[1]];
+    for (let i = parts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [parts[i], parts[j]] = [parts[j], parts[i]];
+    }
+    parts.push(this.jaw);
+    if (this.hat) parts.unshift(this.hat); // the hat goes first, obviously
+    this.shedQueue = parts;
+  }
+
+  attached(part) {
+    let n = part;
+    while (n.parent) n = n.parent;
+    return n === this.group;
+  }
+
+  shed() {
+    while (this.shedQueue.length) {
+      const p = this.shedQueue.shift();
+      if (!this.attached(p)) continue; // flew off with a parent part
+      p.userData.shed = true;
+      return p;
+    }
+    return null;
+  }
+
+  decapitate() {
+    if (!this.attached(this.head)) return null;
+    this.head.userData.shed = true;
+    return this.head;
+  }
+
+  // ---------- canal spawn ----------
+  beginRise() {
+    this.setState('rise');
+    this.group.position.y = -1.75;
+    this.splashed = false;
   }
 
   // ---------- floating word label ----------
@@ -378,6 +445,11 @@ export class Zombie {
     c.fillRect(0, 8, cv.width, 68);
     if (targeted) {
       c.strokeStyle = 'rgba(255,212,121,0.9)';
+      c.lineWidth = 3;
+      c.strokeRect(1, 9, cv.width - 3, 66);
+    }
+    if (!targeted && this.special === 'coffee') {
+      c.strokeStyle = 'rgba(255,190,60,0.75)'; // the barista's label glints amber
       c.lineWidth = 3;
       c.strokeRect(1, 9, cv.width - 3, 66);
     }
@@ -435,7 +507,35 @@ export class Zombie {
       rag.rotation.z = Math.sin(this.t * 2.3 + p * 1.7) * 0.2;
     }
 
+    const ok = (p) => !p.userData.shed; // don't animate parts that were shot off
+
     switch (this.state) {
+      case 'rise': {
+        // clamber dripping out of the canal, over the quay, onto the street
+        const p = this.stateT;
+        if (!this.splashed && p > 0.12) { this.splashed = true; event = 'splash'; }
+        if (p < 1.3) {
+          const q = p / 1.3;
+          this.group.position.y = -1.75 + q * 2.45; // up to the quay top
+          this.body.rotation.x = this.hunch + 0.9 * (1 - q); // unfolding upright
+          for (const i of [0, 1]) {
+            this.shoulders[i].rotation.x = -2.6 + q * (Math.PI / 2 + 1.1); // arms haul upward
+          }
+          if (ok(this.head)) this.head.rotation.x = -0.3 + q * 0.5; // face tips up first
+        } else if (p < 2.1) {
+          const q = (p - 1.3) / 0.8;
+          this.group.position.y = 0.7 * (1 - q); // step down off the quay
+          this.group.position.x += (11.7 - this.group.position.x) * 3 * dt;
+          this.body.rotation.x = this.hunch;
+          const w = this.t * 5;
+          this.hips[0].rotation.x = Math.sin(w) * 0.4;
+          this.hips[1].rotation.x = -Math.sin(w) * 0.4;
+        } else {
+          this.group.position.y = 0;
+          this.setState('walk');
+        }
+        break;
+      }
       case 'walk': {
         // lurch: surge on each step instead of gliding (mean ≈ base speed)
         const cad = (2.6 + this.speed * 2.4) * this.pose.gait;
@@ -465,18 +565,20 @@ export class Zombie {
           if (this.dangling[i]) {
             // dead arm swings passively
             this.shoulders[i].rotation.x = -0.15 + Math.sin(w + i) * 0.09;
-            this.elbows[i].rotation.x = -0.12;
+            if (ok(this.elbows[i])) this.elbows[i].rotation.x = -0.12;
           } else {
             // reaching arm bobs limply
             this.shoulders[i].rotation.x = -Math.PI / 2 + this.pose.reach[i] + Math.sin(w * 0.5 + i * 1.3) * 0.12;
-            this.elbows[i].rotation.x = -0.3 + Math.sin(w * 0.5 + i) * 0.1;
+            if (ok(this.elbows[i])) this.elbows[i].rotation.x = -0.3 + Math.sin(w * 0.5 + i) * 0.1;
           }
         }
 
         // head lolls, jaw hangs and works slowly
-        this.head.rotation.z = this.pose.headTilt + Math.sin(this.t * 0.9 + this.seed) * 0.16;
-        this.head.rotation.x = 0.24 + Math.sin(this.t * 0.6 + this.seed) * 0.1;
-        this.jaw.rotation.x = 0.55 + Math.sin(this.t * 1.7 + this.seed) * 0.2;
+        if (ok(this.head)) {
+          this.head.rotation.z = this.pose.headTilt + Math.sin(this.t * 0.9 + this.seed) * 0.16;
+          this.head.rotation.x = 0.24 + Math.sin(this.t * 0.6 + this.seed) * 0.1;
+        }
+        if (ok(this.jaw)) this.jaw.rotation.x = 0.55 + Math.sin(this.t * 1.7 + this.seed) * 0.2;
 
         if (dist < 2.7) this.setState('attack');
         break;
@@ -486,7 +588,7 @@ export class Zombie {
         const p = this.stateT;
         if (p < 0.35) {
           this.body.rotation.x = this.hunch - p * 1.0;                // rear back
-          this.jaw.rotation.x = 0.55 + p * 1.6;                       // gape
+          if (ok(this.jaw)) this.jaw.rotation.x = 0.55 + p * 1.6;     // gape
           for (const i of [0, 1]) {
             this.shoulders[i].rotation.x = -Math.PI / 2 - p * 1.8;    // arms up
             this.shoulders[i].rotation.z = (i === 0 ? -1 : 1) * p * 1.1; // spread wide
@@ -494,14 +596,14 @@ export class Zombie {
         } else if (p < 0.55) {
           const q = p - 0.35;
           this.body.rotation.x = this.hunch - 0.35 + q * 5.5;         // lunge forward
-          this.jaw.rotation.x = Math.max(0.15, 1.11 - q * 4.5);       // jaw snaps shut
+          if (ok(this.jaw)) this.jaw.rotation.x = Math.max(0.15, 1.11 - q * 4.5); // jaw snaps shut
           for (const i of [0, 1]) {
             this.shoulders[i].rotation.x = -Math.PI / 2 - 0.63 + q * 5;
             this.shoulders[i].rotation.z = (i === 0 ? -1 : 1) * Math.max(0.1, 0.385 - q * 1.5); // clamp inward
           }
         } else {
           this.body.rotation.x = this.hunch;
-          this.jaw.rotation.x = 0.55;
+          if (ok(this.jaw)) this.jaw.rotation.x = 0.55;
           this.shoulders[0].rotation.z = 0;
           this.shoulders[1].rotation.z = 0;
           event = 'strike';
@@ -534,8 +636,8 @@ export class Zombie {
         this.shoulders[1].rotation.z = s * 1.2;
         this.knees[0].rotation.x = 0.15 + s * 1.1;
         this.knees[1].rotation.x = 0.15 + s * 0.8;
-        this.head.rotation.z = this.pose.headTilt + s * 0.6;
-        this.jaw.rotation.x = 0.55 + s * 0.6;
+        if (ok(this.head)) this.head.rotation.z = this.pose.headTilt + s * 0.6;
+        if (ok(this.jaw)) this.jaw.rotation.x = 0.55 + s * 0.6;
         if (p > 0.6) g.position.y -= dt * 2.2; // sink
         if (p > 1.3) this.dead = true;
         break;
@@ -547,14 +649,14 @@ export class Zombie {
         this.body.rotation.z = this.pose.twist + Math.sin(w * 0.7) * 0.05;
         this.shoulders[0].rotation.x = -Math.PI / 2 + Math.sin(w) * 0.1;
         this.shoulders[1].rotation.x = -Math.PI / 2 - Math.sin(w) * 0.1;
-        this.head.rotation.z = this.pose.headTilt * 0.5 + Math.sin(w * 0.4) * 0.1;
-        this.jaw.rotation.x = 0.4 + Math.sin(w * 1.3) * 0.15;
+        if (ok(this.head)) this.head.rotation.z = this.pose.headTilt * 0.5 + Math.sin(w * 0.4) * 0.1;
+        if (ok(this.jaw)) this.jaw.rotation.x = 0.4 + Math.sin(w * 1.3) * 0.15;
         break;
       }
       case 'stagger': {
         this.body.rotation.x = this.hunch * 0.7 - 0.6 * Math.sin(Math.min(this.stateT / 0.5, 1) * Math.PI);
         this.body.rotation.z = Math.sin(this.stateT * 22) * 0.08 * (1 - this.stateT / 0.5);
-        this.jaw.rotation.x = 1.0;
+        if (ok(this.jaw)) this.jaw.rotation.x = 1.0;
         if (this.stateT >= 0.5) { this.body.rotation.z = 0; this.setState('idle'); }
         break;
       }
@@ -571,7 +673,7 @@ export class Zombie {
       if (this.twitchDur > 0) {
         this.twitchDur -= dt;
         const k = Math.sin(Math.max(this.twitchDur, 0) / 0.2 * Math.PI);
-        this.head.rotation.z += k * 0.45 * this.twitchSign;
+        if (ok(this.head)) this.head.rotation.z += k * 0.45 * this.twitchSign;
         this.shoulders[this.twitchSign < 0 ? 0 : 1].rotation.x += k * 0.4;
       }
     }

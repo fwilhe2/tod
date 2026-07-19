@@ -40,9 +40,83 @@ export class Sfx {
     this.verb.connect(verbGain).connect(this.master);
 
     this.startAmbience();
+    this.startMusic();
   }
 
   now() { return this.ctx.currentTime; }
+
+  // ---- adaptive music director ----
+  // intensity 0: silence. 1: sub pulse. 2: + creeping arp. 3: + hats & dissonance.
+  startMusic() {
+    this.intensity = 0;
+    this.musicGain = this.ctx.createGain();
+    this.musicGain.gain.value = 0.0001;
+    this.musicGain.connect(this.master);
+    const send = this.ctx.createGain();
+    send.gain.value = 0.5;
+    this.musicGain.connect(send).connect(this.verb);
+    this.mstep = 0;
+    this.mnext = this.now() + 0.2;
+    setInterval(() => this.pumpMusic(), 110);
+  }
+
+  mtone(t, dur, type, f0, peak, f1) {
+    const o = this.ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = this.ctx.createGain();
+    this.env(g, t, peak, 0.01, dur);
+    o.connect(g).connect(this.musicGain);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  }
+
+  mnoise(t, dur, freq, peak) {
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = freq;
+    const g = this.ctx.createGain();
+    this.env(g, t, peak, 0.004, dur);
+    src.connect(f).connect(g).connect(this.musicGain);
+    src.start(t);
+    src.stop(t + dur + 0.05);
+  }
+
+  pumpMusic() {
+    const spb = 60 / 92 / 2; // 8th notes at 92 bpm
+    while (this.mnext < this.now() + 0.35) {
+      this.playStep(this.mstep, this.mnext);
+      this.mstep = (this.mstep + 1) % 32;
+      this.mnext += spb;
+    }
+  }
+
+  playStep(s, t) {
+    const I = this.intensity;
+    if (!I) return;
+    const bar = Math.floor(s / 8) % 4;
+    const root = [41.2, 41.2, 49.0, 38.9][bar]; // E1 E1 G1 Eb1 — uneasy ground
+    if (s % 8 === 0) this.mtone(t, 0.42, 'sine', root * 2, 0.5, root); // sub thump
+    if (I >= 1 && s % 8 === 4) this.mtone(t, 0.3, 'sine', root * 2, 0.28, root);
+    if (I >= 2 && s % 2 === 1) {
+      const arp = [root * 4, root * 6, root * 8, root * 6];
+      this.mtone(t, 0.13, 'triangle', arp[(s >> 1) % 4], 0.06);
+    }
+    if (I >= 3) {
+      if (s % 2 === 0) this.mnoise(t, 0.04, 5500, s % 8 === 6 ? 0.09 : 0.045); // hats
+      if (s % 16 === 14) this.mtone(t, 0.5, 'sawtooth', root * 3.02, 0.05, root * 2.96); // dissonant scrape
+    }
+  }
+
+  setIntensity(i) {
+    if (!this.ctx || i === this.intensity) return;
+    this.intensity = i;
+    this.musicGain.gain.setTargetAtTime(i > 0 ? 0.85 : 0.0001, this.now(), 1.2);
+  }
 
   env(gainNode, t0, peak, attack, decay) {
     const g = gainNode.gain;
@@ -192,6 +266,23 @@ export class Sfx {
     const t = this.now();
     this.tone(t, 0.1, 'sine', 62, 35, 0.55);
     this.tone(t + 0.17, 0.09, 'sine', 55, 30, 0.4);
+  }
+
+  // something heavy surfacing from the canal
+  splash() {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.noise(t, 0.45, 'bandpass', 1400, 0.3, 350, 0.5);
+    this.noise(t + 0.06, 0.3, 'lowpass', 700, 0.25, 150, 0.4);
+    this.tone(t, 0.3, 'sine', 260, 70, 0.18, 0.3);
+  }
+
+  // coffee acquired: one heart back
+  heart() {
+    if (!this.ctx) return;
+    const t = this.now();
+    [523, 659, 784].forEach((f, i) =>
+      this.tone(t + i * 0.07, 0.3, 'triangle', f, null, 0.15, 0.6));
   }
 
   bell() {

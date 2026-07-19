@@ -26,6 +26,7 @@ const sfx = new Sfx();
 const world = buildWorld(scene, sfx);
 const gun = new Gun(camera);
 const game = new Game(scene, camera, sfx, gun);
+game.world = world;
 if (new URLSearchParams(location.search).has('debug')) window.game = game;
 
 // glow pipeline: muzzle flashes, tracers, eyes, lamps, lightning all bloom
@@ -48,9 +49,9 @@ window.addEventListener('resize', () => {
 const timer = new THREE.Timer();
 renderer.setAnimationLoop((time) => {
   timer.update(time);
-  const dt = Math.min(timer.getDelta(), 0.05);
+  const rawDt = Math.min(timer.getDelta(), 0.05);
   if (game.state !== 'pause') {
-    game.update(dt);
+    const dt = game.advance(rawDt); // bullet-time may dilate the frame
     world.update(dt, camera.position);
   }
   composer.render();

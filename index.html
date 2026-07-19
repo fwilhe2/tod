@@ -37,6 +37,12 @@
       opacity: 0; transition: opacity 0.08s linear; z-index: 7;
     }
     #redflash.on { opacity: 1; }
+    #demobadge {
+      position: absolute; bottom: 12%; left: 0; right: 0; text-align: center;
+      font-size: 24px; font-weight: bold; letter-spacing: 8px; color: var(--amber);
+      text-shadow: 0 0 14px rgba(255,212,121,0.8); z-index: 12; display: none;
+      animation: blink 1.1s steps(2) infinite; pointer-events: none;
+    }
 
     /* ---------- HUD ---------- */
     #hud { position: absolute; inset: 0; pointer-events: none; z-index: 10; display: none; }
@@ -125,6 +131,7 @@
   <div id="vignette" class="fx"></div>
   <div id="redflash" class="fx"></div>
   <div id="scanlines" class="fx"></div>
+  <div id="demobadge">DEMO &mdash; PRESS ANY KEY</div>
 
   <div id="hud">
     <div id="hearts"></div>

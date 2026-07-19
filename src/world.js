@@ -54,16 +54,31 @@ function glowTexture(inner, mid) {
   return new THREE.CanvasTexture(cv);
 }
 
+// Per-district atmospheres, crossfaded during the advance between waves.
+const MOODS = [
+  { fog: 0.016, bg: 0x0a0e18, hemi: 1.3, moonC: 0xdfe8ff, rain: 0.32, flickerAll: 0, bolt: [7, 18] },   // 1: the quiet quay
+  { fog: 0.030, bg: 0x0c1420, hemi: 1.1, moonC: 0xcfd8ea, rain: 0.26, flickerAll: 0, bolt: [9, 20] },   // 2: the drowned mist
+  { fog: 0.020, bg: 0x05070d, hemi: 0.55, moonC: 0x8f98b8, rain: 0.34, flickerAll: 1, bolt: [8, 16] },  // 3: the blackout
+  { fog: 0.018, bg: 0x140b10, hemi: 1.0, moonC: 0xff7a5a, rain: 0.4, flickerAll: 0, bolt: [7, 15] },    // 4: the blood moon
+  { fog: 0.021, bg: 0x0b1020, hemi: 1.2, moonC: 0xdfe8ff, rain: 0.6, flickerAll: 0, bolt: [2.5, 6] },   // 5: the storm
+  { fog: 0.024, bg: 0x081209, hemi: 0.95, moonC: 0xbfe8c8, rain: 0.3, flickerAll: 0.5, bolt: [6, 12] }, // boss: the counting house
+];
+
 export function buildWorld(scene, sfx) {
-  const BG = new THREE.Color(0x0a0e18);
   const BG_FLASH = new THREE.Color(0x3a4a72);
-  scene.background = BG.clone();
+  scene.background = new THREE.Color(0x0a0e18);
   scene.fog = new THREE.FogExp2(0x0a0e18, 0.016);
-  const fogBase = new THREE.Color(0x0a0e18);
-  const fogFlash = new THREE.Color(0x2e3c60);
+
+  // current & target mood, lerped in update()
+  const cur = {
+    fog: 0.016, hemi: 1.3, rain: 0.32, flickerAll: 0,
+    bg: new THREE.Color(0x0a0e18), moonC: new THREE.Color(0xdfe8ff),
+  };
+  let mood = MOODS[0];
 
   // lights
-  scene.add(new THREE.HemisphereLight(0x3d4a70, 0x141824, 1.3));
+  const hemi = new THREE.HemisphereLight(0x3d4a70, 0x141824, 1.3);
+  scene.add(hemi);
   const moonlight = new THREE.DirectionalLight(0x9fb4ff, 1.0);
   moonlight.position.set(-30, 60, -40);
   scene.add(moonlight);
@@ -140,7 +155,7 @@ export function buildWorld(scene, sfx) {
     halo.position.copy(bulb.position);
     halo.scale.setScalar(2.6);
     scene.add(halo);
-    lampGlows.push({ halo, phase: rand(0, 20), flicker: Math.random() < 0.25 });
+    lampGlows.push({ halo, phase: rand(0, 20), rnd: Math.random() });
   }
 
   // moon + halo + stars
@@ -225,9 +240,27 @@ export function buildWorld(scene, sfx) {
 
   let t = 0;
   return {
+    setMood(i) {
+      mood = MOODS[Math.min(i, MOODS.length - 1)];
+    },
     update(dt, camPos) {
       t += dt;
       lamp.position.set(camPos.x + 2, 4.2, camPos.z - 8);
+
+      // crossfade the district atmosphere
+      const mk = 1 - Math.exp(-dt * 0.8);
+      cur.fog += (mood.fog - cur.fog) * mk;
+      cur.hemi += (mood.hemi - cur.hemi) * mk;
+      cur.rain += (mood.rain - cur.rain) * mk;
+      cur.flickerAll += (mood.flickerAll - cur.flickerAll) * mk;
+      cur.bg.lerp(new THREE.Color(mood.bg), mk);
+      cur.moonC.lerp(new THREE.Color(mood.moonC), mk);
+      scene.fog.density = cur.fog;
+      hemi.intensity = cur.hemi;
+      rain.material.opacity = cur.rain;
+      moon.material.color.copy(cur.moonC);
+      moonHalo.material.color.copy(cur.moonC);
+      moonlight.color.copy(cur.moonC);
 
       // ripple the canal near the camera
       const pos = waterGeo.attributes.position;
@@ -274,11 +307,11 @@ export function buildWorld(scene, sfx) {
       }
       emberGeo.attributes.position.needsUpdate = true;
 
-      // lamp flicker
+      // lamp flicker — in the blackout district, every lamp is dying
       for (const lg of lampGlows) {
         const n = Math.sin(t * 9 + lg.phase) * Math.sin(t * 23 + lg.phase * 2);
-        lg.halo.material.opacity = lg.flicker
-          ? Math.max(0.06, 0.45 + n * 0.4)
+        lg.halo.material.opacity = (lg.rnd < Math.max(0.25, cur.flickerAll))
+          ? Math.max(0.05, 0.4 + n * 0.42)
           : 0.5 + n * 0.06;
       }
 
@@ -286,7 +319,7 @@ export function buildWorld(scene, sfx) {
       nextStrike -= dt;
       if (nextStrike <= 0) {
         strike = 1;
-        nextStrike = rand(7, 18);
+        nextStrike = rand(mood.bolt[0], mood.bolt[1]);
         bolt.position.set(rand(-60, 60), 80, camPos.z - rand(30, 90));
         if (sfx) setTimeout(() => sfx.thunder(), rand(350, 1400));
       }
@@ -295,12 +328,12 @@ export function buildWorld(scene, sfx) {
         // double-pulse flicker
         const k = strike * (0.55 + 0.45 * Math.sin(strike * 34));
         bolt.intensity = k * 4.5;
-        scene.background.lerpColors(BG, BG_FLASH, k * 0.8);
-        scene.fog.color.lerpColors(fogBase, fogFlash, k * 0.8);
-      } else if (bolt.intensity !== 0) {
+        scene.background.lerpColors(cur.bg, BG_FLASH, k * 0.8);
+        scene.fog.color.lerpColors(cur.bg, BG_FLASH, k * 0.55);
+      } else {
         bolt.intensity = 0;
-        scene.background.copy(BG);
-        scene.fog.color.copy(fogBase);
+        scene.background.copy(cur.bg);
+        scene.fog.color.copy(cur.bg);
       }
     },
   };
