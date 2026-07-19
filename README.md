@@ -46,10 +46,18 @@ Requires Node 18+.
 
 ## Tech notes
 
-- **Rendering:** Three.js — fog-drenched night canal, procedural low-poly
-  ghouls with jointed shamble/lunge/death animations, canvas-texture word
-  labels as billboards, tracer lines and gore particles per keystroke,
-  vertex-animated canal water, window-lit facades from generated textures.
-- **Audio:** all WebAudio synthesis — gunshots, splats, groans, boss roars,
-  and a wind-and-drone ambience.
+- **Rendering:** Three.js with an HDR bloom post-processing pipeline (ACES
+  tone mapping + UnrealBloomPass) — fog-drenched night canal with rain,
+  lightning, drifting ground mist and embers; procedural multi-jointed
+  ghouls (elbows, knees, swinging jaws, clawed fingers, glowing eyes,
+  wounds, fluttering rags) with shamble/lunge/death animations; a
+  first-person sidearm in a gloved hand with recoil, muzzle flash and
+  ejected shell casings; visible tracer rounds, impact sparks, shockwave
+  rings and score popups per keystroke; canvas-texture word labels as
+  billboards, vertex-animated canal water, window-lit facades from
+  generated textures.
+- **Audio:** all WebAudio synthesis — layered gunshots that pitch up with
+  your combo, splats, panned zombie groans, thunder, a low-HP heartbeat,
+  boss roars, a generated convolution reverb, and a wind-drone-and-bell
+  ambience.
 - **No trademarks:** all names, words, phrases, and story are original.

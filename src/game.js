@@ -18,12 +18,21 @@ const $ = (id) => document.getElementById(id);
 
 const GORE_GEO = new THREE.BoxGeometry(0.13, 0.13, 0.13);
 const POOL_GEO = new THREE.CircleGeometry(0.9, 14);
+const BULLET_GEO = new THREE.CapsuleGeometry(0.03, 0.55, 3, 6);
+const SPARK_GEO = new THREE.BoxGeometry(0.05, 0.05, 0.05);
+const SHELL_GEO = new THREE.BoxGeometry(0.018, 0.018, 0.05);
+const RING_GEO = new THREE.RingGeometry(0.3, 0.38, 28);
+const BULLET_SPEED = 75;
 
 export class Game {
-  constructor(scene, camera, sfx) {
+  constructor(scene, camera, sfx, gun) {
     this.scene = scene;
     this.camera = camera;
     this.sfx = sfx;
+    this.gun = gun;
+    this.fovKick = 0;
+    this.groanT = 3;
+    this.beatT = 0;
 
     this.state = 'title'; // title|intro|playing|advance|bossintro|boss|question|ending|gameover|results|pause
     this.stateT = 0;
@@ -399,11 +408,10 @@ export class Game {
     this.combo++;
     this.maxCombo = Math.max(this.maxCombo, this.combo);
     this.score += 10 * (1 + Math.floor(this.combo / 10));
-    this.sfx.shot();
-    if (z) {
-      this.spawnTracer(z);
-      this.spawnGore(z.headWorldPos(new THREE.Vector3()), 5, 0.55);
-    }
+    this.sfx.shot(this.combo);
+    this.gun.fire();
+    this.spawnShell();
+    if (z) this.spawnBullet(z);
   }
 
   registerMiss() {
@@ -413,11 +421,15 @@ export class Game {
   }
 
   killZombie(z) {
-    this.score += 50 + z.word.length * 15;
+    const pts = 50 + z.word.length * 15;
+    this.score += pts;
     this.sfx.kill();
     const head = z.headWorldPos(new THREE.Vector3());
     this.spawnGore(head, 30, 1.15);
     this.spawnBloodPool(z.group.position);
+    this.spawnRing(head);
+    this.spawnPopup(`+${pts}`, head);
+    this.fovKick = Math.min(this.fovKick + 2.5, 8);
     z.die();
     this.killed++;
     if (this.target === z) this.target = null;
@@ -432,6 +444,10 @@ export class Game {
     const head = this.boss.headWorldPos(new THREE.Vector3());
     this.spawnGore(head, 45, 1.6);
     this.spawnBloodPool(this.boss.group.position);
+    this.spawnRing(head);
+    this.spawnPopup('+400', head);
+    this.fovKick = Math.min(this.fovKick + 4.5, 9);
+    this.shakeT = Math.max(this.shakeT, 0.3);
     this.score += 400;
     if (this.bossHP <= 0) {
       this.sfx.bossRoar();
@@ -467,14 +483,89 @@ export class Game {
     this.spawned++;
   }
 
-  spawnTracer(z) {
-    const head = z.headWorldPos(new THREE.Vector3());
-    const muzzle = new THREE.Vector3(0.35, -0.42, -0.4).applyMatrix4(this.camera.matrixWorld);
-    const geo = new THREE.BufferGeometry().setFromPoints([muzzle, head]);
-    const mat = new THREE.LineBasicMaterial({ color: 0xfff2a8, transparent: true, opacity: 0.9 });
-    const line = new THREE.Line(geo, mat);
-    this.scene.add(line);
-    this.effects.push({ obj: line, life: 0, ttl: 0.1, ownGeo: true });
+  // glowing tracer round that flies from the muzzle to the target's head
+  spawnBullet(z) {
+    const start = this.gun.muzzleWorldPos(new THREE.Vector3());
+    const end = z.headWorldPos(new THREE.Vector3());
+    end.x += rand(-0.12, 0.12);
+    end.y += rand(-0.1, 0.1);
+    const dir = end.clone().sub(start);
+    const dist = dir.length();
+    dir.normalize();
+    const m = new THREE.Mesh(BULLET_GEO, new THREE.MeshBasicMaterial({
+      color: 0xffe9a0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    m.position.copy(start);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    this.scene.add(m);
+    this.effects.push({
+      kind: 'bullet', obj: m, life: 0, ttl: dist / BULLET_SPEED,
+      vel: dir.multiplyScalar(BULLET_SPEED), end,
+    });
+  }
+
+  // where the bullet lands: sparks + a spurt of gore
+  impact(pos) {
+    for (let i = 0; i < 7; i++) {
+      const m = new THREE.Mesh(SPARK_GEO, new THREE.MeshBasicMaterial({
+        color: Math.random() < 0.5 ? 0xffd070 : 0xfff4c0,
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      m.position.copy(pos);
+      this.scene.add(m);
+      this.effects.push({
+        kind: 'spark', obj: m, life: 0, ttl: rand(0.15, 0.35),
+        vel: new THREE.Vector3(rand(-5, 5), rand(-2, 5), rand(-5, 5)),
+      });
+    }
+    this.spawnGore(pos, 5, 0.55);
+  }
+
+  spawnShell() {
+    const m = new THREE.Mesh(SHELL_GEO, new THREE.MeshBasicMaterial({
+      color: 0xd8a848, transparent: true,
+    }));
+    this.gun.ejectWorldPos(m.position);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+    const vel = right.multiplyScalar(rand(1.2, 2.2)).addScaledVector(up, rand(1.6, 2.6));
+    this.scene.add(m);
+    this.effects.push({ kind: 'shell', obj: m, life: 0, ttl: 0.9, vel, spin: rand(10, 22) });
+  }
+
+  spawnRing(pos) {
+    const m = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({
+      color: 0xffd479, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, side: THREE.DoubleSide,
+    }));
+    m.position.copy(pos);
+    m.lookAt(this.camera.position);
+    this.scene.add(m);
+    this.effects.push({ kind: 'ring', obj: m, life: 0, ttl: 0.35 });
+  }
+
+  spawnPopup(text, pos) {
+    const cv = document.createElement('canvas');
+    const c = cv.getContext('2d');
+    c.font = 'bold 48px "Courier New", monospace';
+    cv.width = Math.ceil(c.measureText(text).width) + 24;
+    cv.height = 64;
+    c.font = 'bold 48px "Courier New", monospace';
+    c.textBaseline = 'middle';
+    c.shadowColor = 'rgba(255,180,60,0.9)';
+    c.shadowBlur = 10;
+    c.fillStyle = '#ffd479';
+    c.fillText(text, 12, 32);
+    const tex = new THREE.CanvasTexture(cv);
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthTest: false,
+    }));
+    m.position.copy(pos);
+    m.position.y += 0.5;
+    m.scale.set(cv.width / 80, 0.8, 1);
+    m.renderOrder = 11;
+    this.scene.add(m);
+    this.effects.push({ kind: 'popup', obj: m, life: 0, ttl: 0.9, ownMap: true });
   }
 
   spawnGore(pos, n = 26, force = 1) {
@@ -518,17 +609,45 @@ export class Game {
     for (let i = this.effects.length - 1; i >= 0; i--) {
       const fx = this.effects[i];
       fx.life += dt;
-      if (fx.vel) {
-        fx.vel.y -= 12 * dt;
-        fx.obj.position.addScaledVector(fx.vel, dt);
-        if (fx.obj.position.y < 0.05) { fx.obj.position.y = 0.05; fx.vel.set(0, 0, 0); }
-        fx.obj.material.opacity = 1 - fx.life / fx.ttl;
-      } else {
-        fx.obj.material.opacity = (fx.baseOp ?? 0.9) * (1 - fx.life / fx.ttl);
+      const p = fx.life / fx.ttl;
+      switch (fx.kind) {
+        case 'bullet':
+          fx.obj.position.addScaledVector(fx.vel, dt);
+          if (p >= 1) this.impact(fx.end);
+          break;
+        case 'spark':
+          fx.obj.position.addScaledVector(fx.vel, dt);
+          fx.obj.material.opacity = 1 - p;
+          break;
+        case 'shell':
+          fx.vel.y -= 14 * dt;
+          fx.obj.position.addScaledVector(fx.vel, dt);
+          fx.obj.rotation.x += fx.spin * dt;
+          fx.obj.rotation.z += fx.spin * 0.7 * dt;
+          fx.obj.material.opacity = 1 - p * p;
+          break;
+        case 'ring':
+          fx.obj.scale.setScalar(1 + p * 9);
+          fx.obj.material.opacity = 0.9 * (1 - p);
+          break;
+        case 'popup':
+          fx.obj.position.y += 1.5 * dt;
+          fx.obj.material.opacity = 1 - p * p;
+          break;
+        default: // gore chunks & blood pools
+          if (fx.vel) {
+            fx.vel.y -= 12 * dt;
+            fx.obj.position.addScaledVector(fx.vel, dt);
+            if (fx.obj.position.y < 0.05) { fx.obj.position.y = 0.05; fx.vel.set(0, 0, 0); }
+            fx.obj.material.opacity = 1 - p;
+          } else {
+            fx.obj.material.opacity = (fx.baseOp ?? 0.9) * (1 - p);
+          }
       }
       if (fx.life >= fx.ttl) {
         this.scene.remove(fx.obj);
         if (fx.ownGeo) fx.obj.geometry.dispose();
+        if (fx.ownMap) fx.obj.material.map.dispose();
         fx.obj.material.dispose();
         this.effects.splice(i, 1);
       }
@@ -591,7 +710,23 @@ export class Game {
         break;
     }
 
-    // camera rail + idle sway + shake
+    // ambient dread: distant groans while ghouls are out, heartbeat when low
+    if (this.zombies.length && ['playing', 'intro', 'advance'].includes(this.state)) {
+      this.groanT -= dt;
+      if (this.groanT <= 0) {
+        this.sfx.groan(rand(-0.8, 0.8));
+        this.groanT = rand(2.2, 5.5);
+      }
+    }
+    if (this.hp <= 2 && ['playing', 'intro', 'advance', 'boss'].includes(this.state)) {
+      this.beatT -= dt;
+      if (this.beatT <= 0) {
+        this.sfx.heartbeat();
+        this.beatT = this.hp === 1 ? 0.6 : 0.85;
+      }
+    }
+
+    // camera rail + idle sway + shake + kill-punch zoom
     this.shakeT = Math.max(0, this.shakeT - dt);
     const cam = this.camera;
     cam.position.z = this.baseZ;
@@ -603,6 +738,10 @@ export class Game {
       cam.position.y += rand(-s, s);
     }
     cam.lookAt(0, 1.7, this.baseZ - 12);
+    this.fovKick *= Math.exp(-dt * 7);
+    cam.fov = 60 + this.fovKick;
+    cam.updateProjectionMatrix();
+    this.gun.update(dt, this.time);
 
     // keep word labels legible at distance
     for (const z of this.zombies) {

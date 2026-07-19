@@ -24,6 +24,21 @@ export class Sfx {
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
 
+    // canal-alley reverb: generated exponential-decay impulse
+    const vlen = Math.floor(this.ctx.sampleRate * 1.6);
+    const ir = this.ctx.createBuffer(2, vlen, this.ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const vd = ir.getChannelData(ch);
+      for (let i = 0; i < vlen; i++) {
+        vd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / vlen, 3);
+      }
+    }
+    this.verb = this.ctx.createConvolver();
+    this.verb.buffer = ir;
+    const verbGain = this.ctx.createGain();
+    verbGain.gain.value = 0.45;
+    this.verb.connect(verbGain).connect(this.master);
+
     this.startAmbience();
   }
 
@@ -36,7 +51,7 @@ export class Sfx {
     g.exponentialRampToValueAtTime(0.0001, t0 + attack + decay);
   }
 
-  noise(t0, dur, filterType, freq, peak, freqEnd) {
+  noise(t0, dur, filterType, freq, peak, freqEnd, wet = 0) {
     const src = this.ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.loop = true;
@@ -47,11 +62,16 @@ export class Sfx {
     const g = this.ctx.createGain();
     this.env(g, t0, peak, 0.005, dur);
     src.connect(f).connect(g).connect(this.master);
+    if (wet) {
+      const s = this.ctx.createGain();
+      s.gain.value = wet;
+      g.connect(s).connect(this.verb);
+    }
     src.start(t0);
     src.stop(t0 + dur + 0.05);
   }
 
-  tone(t0, dur, type, f0, f1, peak) {
+  tone(t0, dur, type, f0, f1, peak, wet = 0) {
     const o = this.ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(f0, t0);
@@ -59,60 +79,126 @@ export class Sfx {
     const g = this.ctx.createGain();
     this.env(g, t0, peak, 0.008, dur);
     o.connect(g).connect(this.master);
+    if (wet) {
+      const s = this.ctx.createGain();
+      s.gain.value = wet;
+      g.connect(s).connect(this.verb);
+    }
     o.start(t0);
     o.stop(t0 + dur + 0.05);
   }
 
-  // one shot per correct keystroke
-  shot() {
+  // one shot per correct keystroke; pitch creeps up with the combo
+  shot(combo = 0) {
     if (!this.ctx) return;
     const t = this.now();
-    this.noise(t, 0.09, 'lowpass', 2600, 0.5, 300);
-    this.tone(t, 0.07, 'square', 850, 140, 0.18);
+    const k = Math.min(combo, 30) / 30;
+    this.noise(t, 0.05, 'highpass', 1500, 0.3, 5000, 0.35);          // crack
+    this.noise(t, 0.09, 'lowpass', 2600, 0.5, 300, 0.25);            // body
+    this.tone(t, 0.07, 'square', 850 * (1 + k * 0.45), 140, 0.18);   // report
+    this.tone(t, 0.16, 'sine', 120, 45, 0.35, 0.3);                  // chest thump
   }
 
   miss() {
     if (!this.ctx) return;
     const t = this.now();
     this.tone(t, 0.12, 'square', 130, 90, 0.22);
+    this.noise(t, 0.08, 'bandpass', 300, 0.15);
   }
 
   kill() {
     if (!this.ctx) return;
     const t = this.now();
-    this.noise(t, 0.28, 'lowpass', 500, 0.55, 120);      // splat
-    this.tone(t, 0.45, 'sawtooth', 130, 55, 0.22);       // groan drop
-    this.tone(t + 0.03, 0.4, 'sawtooth', 97, 48, 0.15);  // detuned layer
+    this.noise(t, 0.28, 'lowpass', 500, 0.55, 120, 0.4);   // splat
+    this.noise(t + 0.05, 0.2, 'bandpass', 900, 0.3, 250);  // wet squelch
+    this.tone(t, 0.45, 'sawtooth', 130, 55, 0.22, 0.3);    // groan drop
+    this.tone(t + 0.03, 0.4, 'sawtooth', 97, 48, 0.15);    // detuned layer
+    this.tone(t, 0.3, 'sine', 85, 30, 0.5);                // sub thump
   }
 
   hurt() {
     if (!this.ctx) return;
     const t = this.now();
     this.tone(t, 0.25, 'sine', 70, 40, 0.7);
-    this.noise(t, 0.18, 'lowpass', 900, 0.4, 200);
+    this.noise(t, 0.18, 'lowpass', 900, 0.4, 200, 0.4);
+    this.tone(t, 0.35, 'sawtooth', 220, 60, 0.12, 0.5); // ring in the ears
   }
 
   waveChime() {
     if (!this.ctx) return;
     const t = this.now();
     [440, 554, 659].forEach((f, i) =>
-      this.tone(t + i * 0.09, 0.22, 'triangle', f, null, 0.18));
+      this.tone(t + i * 0.09, 0.22, 'triangle', f, null, 0.18, 0.5));
   }
 
   bossRoar() {
     if (!this.ctx) return;
     const t = this.now();
-    this.tone(t, 1.0, 'sawtooth', 75, 38, 0.4);
-    this.tone(t, 1.0, 'sawtooth', 62, 30, 0.35);
-    this.noise(t, 0.9, 'lowpass', 350, 0.35, 90);
+    this.tone(t, 1.0, 'sawtooth', 75, 38, 0.4, 0.5);
+    this.tone(t, 1.0, 'sawtooth', 62, 30, 0.35, 0.5);
+    this.noise(t, 0.9, 'lowpass', 350, 0.35, 90, 0.6);
+    this.tone(t, 1.2, 'sine', 45, 22, 0.5);
   }
 
   bossHit() {
     if (!this.ctx) return;
     const t = this.now();
-    this.noise(t, 0.3, 'lowpass', 800, 0.6, 150);
-    this.tone(t, 0.5, 'sawtooth', 180, 45, 0.3);
-    [880, 1109].forEach((f, i) => this.tone(t + i * 0.06, 0.15, 'triangle', f, null, 0.12));
+    this.noise(t, 0.3, 'lowpass', 800, 0.6, 150, 0.4);
+    this.tone(t, 0.5, 'sawtooth', 180, 45, 0.3, 0.4);
+    [880, 1109].forEach((f, i) => this.tone(t + i * 0.06, 0.15, 'triangle', f, null, 0.12, 0.5));
+  }
+
+  thunder() {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.noise(t, 2.6, 'lowpass', 320, 0.5, 45, 0.8);
+    this.noise(t + 0.4, 2.0, 'lowpass', 200, 0.35, 40, 0.8);
+    this.tone(t, 1.8, 'sine', 55, 24, 0.45, 0.5);
+  }
+
+  // distant zombie moan, panned across the street
+  groan(pan = 0) {
+    if (!this.ctx) return;
+    const t = this.now();
+    const dur = 0.9 + Math.random() * 0.8;
+    const o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    const f0 = 70 + Math.random() * 45;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f0 * 0.72, t + dur);
+    const vib = this.ctx.createOscillator();
+    vib.frequency.value = 4 + Math.random() * 2.5;
+    const vibGain = this.ctx.createGain();
+    vibGain.gain.value = 6;
+    vib.connect(vibGain).connect(o.frequency);
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 500;
+    const g = this.ctx.createGain();
+    this.env(g, t, 0.07, 0.25, dur);
+    const p = this.ctx.createStereoPanner();
+    p.pan.value = pan;
+    o.connect(f).connect(g).connect(p).connect(this.master);
+    const s = this.ctx.createGain();
+    s.gain.value = 0.8;
+    g.connect(s).connect(this.verb);
+    o.start(t); vib.start(t);
+    o.stop(t + dur + 0.3); vib.stop(t + dur + 0.3);
+    this.noise(t + 0.1, dur * 0.6, 'bandpass', 700, 0.02, 400, 0.6); // breath
+  }
+
+  heartbeat() {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.tone(t, 0.1, 'sine', 62, 35, 0.55);
+    this.tone(t + 0.17, 0.09, 'sine', 55, 30, 0.4);
+  }
+
+  bell() {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.tone(t, 2.8, 'triangle', 233, 231, 0.05, 0.9);
+    this.tone(t, 2.2, 'triangle', 349.6, 348, 0.03, 0.9);
   }
 
   startAmbience() {
@@ -127,7 +213,28 @@ export class Sfx {
       o.connect(g);
       o.start(t);
     });
-    // slow wind
+    // slow-breathing drone layer
+    const pad = this.ctx.createGain();
+    pad.gain.value = 0.02;
+    pad.connect(this.master);
+    const padVerb = this.ctx.createGain();
+    padVerb.gain.value = 0.7;
+    pad.connect(padVerb).connect(this.verb);
+    const padLfo = this.ctx.createOscillator();
+    padLfo.frequency.value = 0.07;
+    const padLfoGain = this.ctx.createGain();
+    padLfoGain.gain.value = 0.014;
+    padLfo.connect(padLfoGain).connect(pad.gain);
+    [82.4, 123.5].forEach((f) => {
+      const o = this.ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = f;
+      o.detune.value = Math.random() * 8 - 4;
+      o.connect(pad);
+      o.start(t);
+    });
+    padLfo.start(t);
+    // slow wind + rain hiss
     const src = this.ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.loop = true;
@@ -145,5 +252,17 @@ export class Sfx {
     src.connect(f).connect(wg).connect(this.master);
     src.start(t);
     lfo.start(t);
+    const hiss = this.ctx.createBufferSource();
+    hiss.buffer = this.noiseBuf;
+    hiss.loop = true;
+    const hf = this.ctx.createBiquadFilter();
+    hf.type = 'highpass';
+    hf.frequency.value = 5000;
+    const hg = this.ctx.createGain();
+    hg.gain.value = 0.006;
+    hiss.connect(hf).connect(hg).connect(this.master);
+    hiss.start(t);
+    // a distant bell, now and then
+    setInterval(() => { if (Math.random() < 0.45) this.bell(); }, 21000);
   }
 }
