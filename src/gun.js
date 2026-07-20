@@ -156,6 +156,15 @@ export class Gun {
     }
     this.flashLight = new THREE.PointLight(0xffc866, 0, 9, 1.6);
     this.muzzle.add(this.flashLight);
+    // tight cone down the barrel: a pool of light on whatever we're aimed at,
+    // narrow enough that it doesn't wash the whole street out. decay 0 keeps a
+    // ghoul 25 m out as bright as one at 5 m; the distance is only a cutoff so
+    // the far end of the street stays black.
+    this.flashSpot = new THREE.SpotLight(0xffd291, 0, 55, 0.17, 0.8, 0);
+    this.muzzle.add(this.flashSpot);
+    this.flashSpot.target = new THREE.Object3D();
+    this.flashSpot.target.position.set(0, 0, -1);
+    this.muzzle.add(this.flashSpot.target);
 
     // small fill light so the metal and glove read against the dark street
     const fill = new THREE.PointLight(0xa8b4dc, 18, 3.5, 1.5);
@@ -207,6 +216,7 @@ export class Gun {
       p.scale.setScalar((this.flashScale ?? 1) * (0.7 + k * 0.5));
     }
     this.flashLight.intensity = 40 * k;
+    this.flashSpot.intensity = 30 * k;
   }
 
   update(dt, time) {

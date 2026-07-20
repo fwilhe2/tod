@@ -8,6 +8,10 @@ const SHADOW_MAT = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: t
 const BONE_MAT = new THREE.MeshLambertMaterial({ color: 0xc4bca8 });
 const SHADOW_GEO = new THREE.CircleGeometry(0.75, 20);
 
+// how hard a muzzle flash washes the corpse it's aimed at, added to emissive
+const FLASH_LIT = new THREE.Color(0.36, 0.27, 0.16);
+const FLASH_FADE = 0.11; // seconds — a touch longer than the flash sprite
+
 // soft radial glow texture, shared by all eye glows
 const GLOW_TEX = (() => {
   const cv = document.createElement('canvas');
@@ -113,6 +117,27 @@ export class Zombie {
     this.shadow = shadow;
 
     this.makeLabel();
+
+    // muzzle-flash lighting: emissive gets pushed toward the flash colour for a
+    // few frames whenever we're the one being shot at
+    this.litMats = [this.skinMat, this.clothMat, this.woundMat].map((m) => ({
+      mat: m, base: m.emissive.clone(),
+    }));
+    this.lit = 0;
+  }
+
+  // called on every landed letter — the flash washes over this corpse
+  flashLight() { this.lit = 1; }
+
+  applyLit() {
+    const k = this.lit;
+    for (const { mat, base } of this.litMats) {
+      mat.emissive.setRGB(
+        base.r + FLASH_LIT.r * k,
+        base.g + FLASH_LIT.g * k,
+        base.b + FLASH_LIT.b * k
+      );
+    }
   }
 
   geo(g) { this.geos.push(g); return g; }
@@ -494,6 +519,11 @@ export class Zombie {
     this.stateT += dt;
     const g = this.group;
     let event = null;
+
+    if (this.lit > 0) {
+      this.lit = Math.max(0, this.lit - dt / FLASH_FADE);
+      this.applyLit();
+    }
 
     const toCam = new THREE.Vector3(camPos.x, 0, camPos.z).sub(new THREE.Vector3(g.position.x, 0, g.position.z));
     const dist = toCam.length();
