@@ -623,6 +623,13 @@ export class Game {
     this.spawnRing(new THREE.Vector3(pos.x, -0.55, pos.z), 0x9fc0e8, true);
   }
 
+  // head of whatever we're shooting at, in camera space (null when nothing locked)
+  aimLocal(cam) {
+    let z = this.state === 'boss' ? this.boss : this.target;
+    if (!z || z.dead || z.state === 'dying') return null;
+    return cam.worldToLocal(z.headWorldPos(new THREE.Vector3()));
+  }
+
   // glowing tracer round that flies from the muzzle to the target's head
   spawnBullet(z) {
     const start = this.gun.muzzleWorldPos(new THREE.Vector3());
@@ -938,6 +945,8 @@ export class Game {
     this.fovKick *= Math.exp(-dt * 7);
     cam.fov = 60 + this.fovKick;
     cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+    this.gun.aimAt(this.aimLocal(cam));
     this.gun.update(dt, this.time);
 
     // keep word labels legible at distance

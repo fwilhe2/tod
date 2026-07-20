@@ -3,6 +3,8 @@ import * as THREE from 'three';
 // First-person "field keyboard sidearm": chunky service pistol in a gloved
 // hand, bottom-right of frame. Muzzle flash + point light + recoil on fire.
 
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
 function flashTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = 128;
@@ -167,7 +169,25 @@ export class Gun {
 
     this.recoil = 0;
     this.flashLife = 0;
+    // aim swing toward whatever we're currently shooting at (camera-space)
+    this.baseYaw = -0.07;
+    this.aimYaw = 0;
+    this.aimPitch = 0;
+    this.wantYaw = 0;
+    this.wantPitch = 0;
     this.setFlash(0);
+  }
+
+  // point the barrel at a target given in camera-local space; null = rest pose
+  aimAt(local) {
+    if (!local) { this.wantYaw = 0; this.wantPitch = 0; return; }
+    const dx = local.x - this.basePos.x;
+    const dy = local.y - this.basePos.y;
+    const dz = local.z - this.basePos.z;
+    const flat = Math.hypot(dx, dz) || 1e-6;
+    // barrel rests along -Z, so undo the stylistic base yaw to get a true lead
+    this.wantYaw = clamp(Math.atan2(-dx, -dz) - this.baseYaw, -0.55, 0.55);
+    this.wantPitch = clamp(Math.atan2(dy, flat), -0.4, 0.4);
   }
 
   fire() {
@@ -194,6 +214,11 @@ export class Gun {
     this.flashLife = Math.max(0, this.flashLife - dt / 0.065);
     this.setFlash(this.flashLife);
 
+    // swing onto the current target instead of snapping
+    const k = 1 - Math.exp(-dt * 9);
+    this.aimYaw += (this.wantYaw - this.aimYaw) * k;
+    this.aimPitch += (this.wantPitch - this.aimPitch) * k;
+
     const r = this.recoil;
     // idle sway + breathing bob, then recoil kick back and up
     this.group.position.set(
@@ -201,8 +226,9 @@ export class Gun {
       this.basePos.y + Math.sin(time * 2.3) * 0.007 + r * 0.02,
       this.basePos.z + r * 0.09
     );
-    this.group.rotation.x = -r * 0.22;
-    this.group.rotation.z = Math.sin(time * 1.3) * 0.008 + r * 0.03;
+    this.group.rotation.x = -r * 0.22 + this.aimPitch;
+    this.group.rotation.y = this.baseYaw + this.aimYaw;
+    this.group.rotation.z = Math.sin(time * 1.3) * 0.008 + r * 0.03 - this.aimYaw * 0.25;
     this.slide.position.z = -0.06 + r * 0.055;
   }
 }
