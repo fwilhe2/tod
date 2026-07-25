@@ -31,6 +31,7 @@ export class Game {
     this.sfx = sfx;
     this.gun = gun;
     this.world = null;   // set by main.js, drives district moods
+    this.ZombieClass = Zombie; // main.js swaps in ModelZombie for ?models
     this.fovKick = 0;
     this.groanT = 3;
     this.beatT = 0;
@@ -187,7 +188,7 @@ export class Game {
 
   startBoss() {
     this.hideBanner();
-    this.boss = new Zombie('', this.camera.position.x, this.baseZ - 17, 0, 3.1, 0x86986a);
+    this.boss = new this.ZombieClass('', this.camera.position.x, this.baseZ - 17, 0, 3.1, 0x86986a);
     this.boss.setState('idle');
     this.boss.label.visible = false;
     this.scene.add(this.boss.group);
@@ -572,10 +573,10 @@ export class Game {
     let z;
     if (riser) {
       // it comes up out of the canal, soaked dark
-      z = new Zombie(word, rand(13.5, 15.5), this.baseZ - rand(12, 24), speed, 1, 0x5c6a54);
+      z = new this.ZombieClass(word, rand(13.5, 15.5), this.baseZ - rand(12, 24), speed, 1, 0x5c6a54);
       z.beginRise();
     } else {
-      z = new Zombie(
+      z = new this.ZombieClass(
         word,
         this.camera.position.x + rand(-7, 7),
         this.baseZ - rand(26, 36),

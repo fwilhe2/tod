@@ -8,6 +8,7 @@ import { Game } from './game.js';
 import { Gun } from './gun.js';
 import { Sfx } from './audio.js';
 
+const params = new URLSearchParams(location.search);
 const app = document.getElementById('app');
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -27,7 +28,19 @@ const world = buildWorld(scene, sfx);
 const gun = new Gun(camera);
 const game = new Game(scene, camera, sfx, gun);
 game.world = world;
-if (new URLSearchParams(location.search).has('debug')) window.game = game;
+if (params.has('debug')) window.game = game;
+
+// ?models — swap the procedural ghouls for the CC0 skinned glTF (see ASSETS.md).
+// Loaded on demand so the default build carries neither GLTFLoader nor the mesh;
+// the title screen is up while it downloads, so the wait is invisible.
+if (params.has('models')) {
+  import('./zombieModel.js')
+    .then(async ({ loadZombieModel, ModelZombie }) => {
+      await loadZombieModel(`${import.meta.env.BASE_URL}models/zombie.glb`);
+      game.ZombieClass = ModelZombie;
+    })
+    .catch((err) => console.error('model load failed, staying procedural:', err));
+}
 
 // glow pipeline: muzzle flashes, tracers, eyes, lamps, lightning all bloom
 const composer = new EffectComposer(renderer);

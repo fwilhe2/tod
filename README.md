@@ -52,6 +52,20 @@ npm run preview  # serve the production build
 
 Requires Node 18+.
 
+### Optional: modelled ghouls
+
+Append `?models` to the URL (e.g. `http://localhost:5173/?models`) to swap the
+procedural ghouls for a CC0 skinned glTF zombie with real keyframed animation.
+Everything else — the canal, the sidearm, the boss's hat, all of the audio —
+stays procedural, and the default build ships neither the mesh nor `GLTFLoader`.
+See [ASSETS.md](./ASSETS.md) for provenance and licensing.
+
+Nothing in the typed-dismemberment mechanic was given up for this: because you
+cannot detach part of a skinned mesh, `src/zombieModel.js` carves each gib out
+of the source mesh at runtime — it takes the triangles weighted to the severed
+bone, bakes them at their current animated pose, and collapses the bone. So the
+limbs still come off letter by letter without a single authored stump mesh.
+
 ## Tech notes
 
 - **Rendering:** Three.js with an HDR bloom post-processing pipeline (ACES

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLOW_TEX, WordLabel } from './label.js';
 
 // pallid, desaturated corpse tones — no healthy saturation
 const SKIN = [0x87927a, 0x7d8a68, 0x8e9a84, 0x707d5e, 0x939c7d];
@@ -7,20 +8,6 @@ const CLOTH = [0x49443e, 0x3d4348, 0x51453a, 0x41483f, 0x3b3d4e, 0x564a44];
 const SHADOW_MAT = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4 });
 const BONE_MAT = new THREE.MeshLambertMaterial({ color: 0xc4bca8 });
 const SHADOW_GEO = new THREE.CircleGeometry(0.75, 20);
-
-// soft radial glow texture, shared by all eye glows
-const GLOW_TEX = (() => {
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 64;
-  const c = cv.getContext('2d');
-  const g = c.createRadialGradient(32, 32, 2, 32, 32, 32);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.4, 'rgba(255,255,255,0.4)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  c.fillStyle = g;
-  c.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(cv);
-})();
 
 function rand(a, b) { return a + Math.random() * (b - a); }
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -39,11 +26,6 @@ function lump(geo, amt, seed = 0) {
   geo.computeVertexNormals();
   return geo;
 }
-
-// Successive zombies cycle through these label heights so words on
-// overlapping zombies don't cover each other.
-const LABEL_HEIGHTS = [2.9, 3.6, 4.3];
-let labelSlot = 0;
 
 export class Zombie {
   constructor(word, x, z, speed, scale = 1, tint = null, special = null) {
@@ -418,53 +400,15 @@ export class Zombie {
 
   // ---------- floating word label ----------
   makeLabel() {
-    this.canvas = document.createElement('canvas');
-    this.lctx = this.canvas.getContext('2d');
-    const font = 'bold 58px "Courier New", monospace';
-    this.lctx.font = font;
-    const w = Math.ceil(this.lctx.measureText(this.word).width) + 36;
-    this.canvas.width = w;
-    this.canvas.height = 84;
-    this.tex = new THREE.CanvasTexture(this.canvas);
-    const mat = new THREE.SpriteMaterial({ map: this.tex, transparent: true, depthTest: false });
-    this.label = new THREE.Sprite(mat);
-    this.label.position.set(0, LABEL_HEIGHTS[labelSlot++ % LABEL_HEIGHTS.length], 0);
-    this.label.renderOrder = 10;
-    this.baseLabelW = w / 90;
+    this.wordLabel = new WordLabel(this.word);
+    this.label = this.wordLabel.sprite;
+    this.baseLabelW = this.wordLabel.baseW;
     this.group.add(this.label);
     this.drawLabel(false);
   }
 
   drawLabel(targeted) {
-    const c = this.lctx, cv = this.canvas;
-    c.clearRect(0, 0, cv.width, cv.height);
-    c.font = 'bold 58px "Courier New", monospace';
-    c.textBaseline = 'middle';
-    // backdrop
-    c.fillStyle = targeted ? 'rgba(10,14,8,0.96)' : 'rgba(4,6,12,0.88)';
-    c.fillRect(0, 8, cv.width, 68);
-    if (targeted) {
-      c.strokeStyle = 'rgba(255,212,121,0.9)';
-      c.lineWidth = 3;
-      c.strokeRect(1, 9, cv.width - 3, 66);
-    }
-    if (!targeted && this.special === 'coffee') {
-      c.strokeStyle = 'rgba(255,190,60,0.75)'; // the barista's label glints amber
-      c.lineWidth = 3;
-      c.strokeRect(1, 9, cv.width - 3, 66);
-    }
-    const done = this.word.slice(0, this.progress);
-    const todo = this.word.slice(this.progress);
-    let x = 18;
-    c.shadowColor = 'rgba(255,190,80,0.9)';
-    c.shadowBlur = targeted ? 12 : 0;
-    c.fillStyle = '#ffd479';
-    c.fillText(done, x, 44);
-    x += c.measureText(done).width;
-    c.shadowBlur = 0;
-    c.fillStyle = targeted ? '#ffffff' : '#c9d4c9';
-    c.fillText(todo, x, 44);
-    this.tex.needsUpdate = true;
+    this.wordLabel.draw(this.progress, targeted, this.special);
   }
 
   headWorldPos(out) {
@@ -682,8 +626,7 @@ export class Zombie {
 
   dispose(scene) {
     scene.remove(this.group);
-    this.tex.dispose();
-    this.label.material.dispose();
+    this.wordLabel.dispose();
     for (const geo of this.geos) geo.dispose();
     for (const mat of this.mats) mat.dispose();
   }
