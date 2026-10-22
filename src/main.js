@@ -47,6 +47,7 @@ if (new URLSearchParams(location.search).has('debug')) window.game = game;
 // then a film-stock grade pass on top
 const post = createPost(renderer, scene, camera);
 game.post = post;
+if (window.game) Object.assign(window, { renderer, world, post, scene, gun });
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -55,6 +56,21 @@ window.addEventListener('resize', () => {
   post.resize(window.innerWidth, window.innerHeight);
   world.mirror.resize();
 });
+
+// Adaptive quality: if frames run long for a few seconds, render at a lower
+// resolution (80%, then 64%).
+const quality = { level: 0, slowT: 0, ema: 1 / 60 };
+if (new URLSearchParams(location.search).has('fixedq')) quality.level = 2; // for benchmarking
+function watchFrameRate(dt) {
+  quality.ema += (dt - quality.ema) * 0.05;
+  quality.slowT = quality.ema > 1 / 42 ? quality.slowT + dt : 0;
+  if (quality.slowT < 3 || quality.level >= 2) return;
+  quality.level++;
+  quality.slowT = 0;
+  renderer.setPixelRatio(renderer.getPixelRatio() * 0.8);
+  post.resize(window.innerWidth, window.innerHeight);
+  world.mirror.resize();
+}
 
 const timer = new THREE.Timer();
 let frames = 0;
@@ -68,4 +84,5 @@ renderer.setAnimationLoop((time) => {
   // (skip the mirror until the shadow maps exist, or it samples empty ones)
   if (frames++ > 0) world.renderReflection(camera);
   post.render(rawDt, timer.getElapsed());
+  if (frames > 60 && !document.hidden) watchFrameRate(timer.getDelta());
 });

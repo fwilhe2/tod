@@ -212,12 +212,43 @@ export class Zombie {
     g.add(shadow);
     this.shadow = shadow;
 
+    this.compact(g, new Set([shadow, this.aura, ...(this.coins ?? [])]));
     g.traverse((o) => { if (o.isMesh && o !== shadow) o.castShadow = true; });
     this.makeLabel();
   }
 
   geo(g) { this.geos.push(g); return g; }
   mat(m) { this.mats.push(m); return m; }
+  // Merge sibling leaf meshes that share a material into one draw call. The
+  // joints and every part that can be shot off are Groups, so they survive;
+  // only the static pieces hanging off each joint get baked together.
+  compact(root, keep) {
+    const nodes = [];
+    root.traverse((o) => nodes.push(o));
+    for (const node of nodes) {
+      const byMat = new Map();
+      for (const c of node.children) {
+        if (!c.isMesh || c.children.length || keep.has(c)) continue;
+        if (!byMat.has(c.material)) byMat.set(c.material, []);
+        byMat.get(c.material).push(c);
+      }
+      for (const [mat, list] of byMat) {
+        if (list.length < 2) continue;
+        const geos = list.map((m) => {
+          m.updateMatrix();
+          const g = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()).applyMatrix4(m.matrix);
+          for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+          return g;
+        });
+        const merged = mergeGeometries(geos);
+        if (!merged) continue;
+        for (const g of geos) g.dispose();
+        for (const m of list) node.remove(m);
+        node.add(new THREE.Mesh(this.geo(merged), mat));
+      }
+    }
+  }
+
   get burnMats() { return this.mats.filter((m) => m.userData.dissolve); }
   mesh(g, m) { return new THREE.Mesh(this.geo(g), m); }
 

@@ -25,21 +25,21 @@ function glowTexture(inner, mid) {
 // Soft volumetric cone of lamplight hanging in the rain: brightest at the
 // lamp and down the middle of the beam, fading to nothing at its edges.
 const coneVert = /* glsl */`
-  uniform float height;
-  varying float vY;
+  attribute float aStrength;
+  varying float vY, vS;
   varying vec3 vN, vV;
   void main() {
-    vY = position.y / height + 0.5;
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    vN = normalize(normalMatrix * normal);
+    vY = position.y + 0.5; // unit cone: 0 at the ground ring, 1 at the lamp
+    vS = aStrength;
+    vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+    vN = normalize(normalMatrix * mat3(instanceMatrix) * normal);
     vV = -mv.xyz;
     gl_Position = projectionMatrix * mv;
   }
 `;
 const coneFrag = /* glsl */`
   uniform vec3 color;
-  uniform float strength;
-  varying float vY;
+  varying float vY, vS;
   varying vec3 vN, vV;
   void main() {
     // clamp: vY can dip a hair below 0 at the rim, and pow() of a negative
@@ -47,8 +47,34 @@ const coneFrag = /* glsl */`
     float y = clamp(vY, 0.0, 1.0);
     float facing = clamp(abs(dot(normalize(vN), normalize(vV))), 0.0, 1.0);
     float a = pow(y, 1.4) * facing * facing * smoothstep(0.0, 0.3, y);
-    a *= exp(-length(vV) * 0.035) * max(strength, 0.0);
+    a *= exp(-length(vV) * 0.035) * max(vS, 0.0);
     gl_FragColor = vec4(color * max(a, 0.0), 1.0);
+  }
+`;
+
+// Camera-facing glow quads, one instanced draw for every lamp halo.
+const haloVert = /* glsl */`
+  attribute float aOpacity;
+  varying vec2 vUv;
+  varying float vO;
+  uniform float fogDensity;
+  void main() {
+    vUv = uv;
+    vec4 c = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    float size = length(instanceMatrix[0].xyz);
+    c.xy += position.xy * size;
+    float d = length(c.xyz);
+    vO = aOpacity * exp(-d * d * fogDensity * fogDensity * 0.5);
+    gl_Position = projectionMatrix * c;
+  }
+`;
+const haloFrag = /* glsl */`
+  uniform sampler2D map;
+  varying vec2 vUv;
+  varying float vO;
+  void main() {
+    vec4 t = texture2D(map, vUv);
+    gl_FragColor = vec4(t.rgb * t.a * max(vO, 0.0), 1.0);
   }
 `;
 
@@ -157,6 +183,8 @@ export function buildWorld(scene, sfx, renderer) {
   // lightning strobe
   const bolt = shadowed(new THREE.DirectionalLight(0xcdd8ff, 0));
   const boltDir = new THREE.Vector3(20, 80, -60).normalize();
+  bolt.shadow.autoUpdate = false; // only re-rendered while a strike is lit
+  bolt.shadow.needsUpdate = true;  // ...but it must exist from the first frame
   scene.add(bolt);
 
   // wet cobbled street: PBR setts, glossy puddles that mirror the scene
@@ -238,22 +266,7 @@ export function buildWorld(scene, sfx, renderer) {
   const ironGeos = [], bulbGeos = [];
   const put = (list, g, x, y, z) => { g.translate(x, y, z); list.push(g); };
   const addLight = (pos, size, cone) => {
-    const coneMat = new THREE.ShaderMaterial({
-      uniforms: { color: { value: new THREE.Color(0xffb468) }, strength: { value: 1.0 }, height: { value: cone[1] } },
-      vertexShader: coneVert, fragmentShader: coneFrag,
-      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-    });
-    const beam = new THREE.Mesh(new THREE.ConeGeometry(cone[0], cone[1], 20, 1, true), coneMat);
-    beam.position.set(pos.x, pos.y - cone[1] / 2 + 0.1, pos.z);
-    scene.add(beam);
-    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: lampGlowTex, transparent: true, blending: THREE.AdditiveBlending,
-      depthWrite: false, opacity: 0.5,
-    }));
-    halo.position.copy(pos);
-    halo.scale.setScalar(size);
-    scene.add(halo);
-    lampGlows.push({ halo, beam, pos, phase: rand(0, 20), rnd: Math.random(), k: 1 });
+    lampGlows.push({ pos, size, cone, phase: rand(0, 20), rnd: Math.random(), k: 1 });
   };
   for (let z = 0; z > -440; z -= 22) {
     const x = 11.5;
@@ -273,6 +286,34 @@ export function buildWorld(scene, sfx, renderer) {
     addLight(new THREE.Vector3(p.x + s * 0.12, p.y, p.z), 2.2, [1.7, 3.9]);
   }
   scene.add(new THREE.Mesh(mergeGeometries(ironGeos.map((g) => g.toNonIndexed())), ironMat));
+
+  // every lamp's halo and light cone: two instanced draws in total
+  const NL = lampGlows.length;
+  const coneGeo = new THREE.ConeGeometry(1, 1, 20, 1, true);
+  const coneStrength = new THREE.InstancedBufferAttribute(new Float32Array(NL).fill(1), 1).setUsage(THREE.DynamicDrawUsage);
+  coneGeo.setAttribute('aStrength', coneStrength);
+  const cones = new THREE.InstancedMesh(coneGeo, new THREE.ShaderMaterial({
+    uniforms: { color: { value: new THREE.Color(0xffb468) } },
+    vertexShader: coneVert, fragmentShader: coneFrag,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  }), NL);
+  const haloGeo = new THREE.PlaneGeometry(1, 1);
+  const haloOpacity = new THREE.InstancedBufferAttribute(new Float32Array(NL).fill(0.5), 1).setUsage(THREE.DynamicDrawUsage);
+  haloGeo.setAttribute('aOpacity', haloOpacity);
+  const haloFog = { value: 0.016 };
+  const halos = new THREE.InstancedMesh(haloGeo, new THREE.ShaderMaterial({
+    uniforms: { map: { value: lampGlowTex }, fogDensity: haloFog },
+    vertexShader: haloVert, fragmentShader: haloFrag,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  }), NL);
+  const _lm = new THREE.Matrix4();
+  lampGlows.forEach((lg, i) => {
+    const [r, h] = lg.cone;
+    cones.setMatrixAt(i, _lm.makeScale(r, h, r).setPosition(lg.pos.x, lg.pos.y - h / 2 + 0.1, lg.pos.z));
+    halos.setMatrixAt(i, _lm.makeScale(lg.size, lg.size, lg.size).setPosition(lg.pos));
+  });
+  for (const m of [cones, halos]) { m.frustumCulled = false; scene.add(m); }
+  cones.layers.set(NO_REFLECT_LAYER); // beams in the puddles just read as fog
   scene.add(new THREE.Mesh(mergeGeometries(bulbGeos.map((g) => g.toNonIndexed())), bulbMat));
 
   // a small pool of real point lights hops between the lamps nearest the
@@ -502,14 +543,17 @@ export function buildWorld(scene, sfx, renderer) {
       emberGeo.attributes.position.needsUpdate = true;
 
       // lamp flicker — in the blackout district, every lamp is dying
-      for (const lg of lampGlows) {
+      lampGlows.forEach((lg, i) => {
         const n = Math.sin(t * 9 + lg.phase) * Math.sin(t * 23 + lg.phase * 2);
-        lg.halo.material.opacity = (lg.rnd < Math.max(0.25, cur.flickerAll))
+        const op = (lg.rnd < Math.max(0.25, cur.flickerAll))
           ? Math.max(0.05, 0.4 + n * 0.42)
           : 0.5 + n * 0.06;
-        lg.k = lg.halo.material.opacity / 0.5;
-        lg.beam.material.uniforms.strength.value = 1.0 * lg.k;
-      }
+        lg.k = op / 0.5;
+        haloOpacity.array[i] = op;
+        coneStrength.array[i] = lg.k;
+      });
+      haloOpacity.needsUpdate = coneStrength.needsUpdate = true;
+      haloFog.value = cur.fog;
       // hand the pooled lights to the nearest lamps ahead of the camera
       const near = lampGlows
         .filter((lg) => lg.pos.z < camPos.z + 4 && lg.pos.z > camPos.z - 60)
@@ -536,6 +580,7 @@ export function buildWorld(scene, sfx, renderer) {
         // double-pulse flicker
         const k = strike * (0.55 + 0.45 * Math.sin(strike * 34));
         bolt.intensity = k * 4.5;
+        bolt.shadow.needsUpdate = true;
         boltMat.opacity = Math.min(1, k * 1.6);
         scene.fog.color.lerpColors(cur.bg, BG_FLASH, k * 0.55);
         sky.uniforms.flash.value = k;

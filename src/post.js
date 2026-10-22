@@ -4,7 +4,10 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 
+// The grade pass reads composer passes by index in debug tools: 0 render,
+// 1 bloom, 2 output, 3 fxaa, 4 grade.
 // Final "film stock" pass, applied after tone mapping in display space:
 // barrel lens distortion, chromatic fringing toward the edges, a cold-shadow /
 // warm-highlight split tone, animated grain, a soft vignette, and a pulse of
@@ -147,10 +150,10 @@ function paintSplat(c, S, kind) {
 export function createPost(renderer, scene, camera) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   // half-float + MSAA target: the composer otherwise drops the canvas antialiasing
-  const target = new THREE.WebGLRenderTarget(size.x, size.y, {
-    type: THREE.HalfFloatType,
-    samples: 4,
-  });
+  // Half-float HDR target. Antialiasing is FXAA after tone mapping:
+  // multisampling a half-float target cost a third of the frame on
+  // integrated GPUs.
+  const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType });
   const composer = new EffectComposer(renderer, target);
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(
@@ -158,11 +161,14 @@ export function createPost(renderer, scene, camera) {
   );
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
+  const fxaa = new ShaderPass(FXAAShader);
+  composer.addPass(fxaa);
   const grade = new ShaderPass(GradeShader);
   composer.addPass(grade);
 
   const u = grade.uniforms;
   u.resolution.value.copy(size);
+  fxaa.uniforms.resolution.value.set(1 / size.x, 1 / size.y);
   const splatCanvas = document.createElement('canvas');
   splatCanvas.width = splatCanvas.height = 512;
   const splatCtx = splatCanvas.getContext('2d');
@@ -184,6 +190,7 @@ export function createPost(renderer, scene, camera) {
       composer.setSize(w, h);
       bloom.resolution.set(w, h);
       renderer.getDrawingBufferSize(u.resolution.value);
+      fxaa.uniforms.resolution.value.set(1 / u.resolution.value.x, 1 / u.resolution.value.y);
     },
     render(dt, time) {
       this.hurt *= Math.exp(-dt * 2.8);
