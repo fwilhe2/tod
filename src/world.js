@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createSky } from './sky.js';
 
 function rand(a, b) { return a + Math.random() * (b - a); }
 
@@ -56,22 +57,21 @@ function glowTexture(inner, mid) {
 
 // Per-district atmospheres, crossfaded during the advance between waves.
 const MOODS = [
-  { fog: 0.016, bg: 0x0a0e18, hemi: 1.3, moonC: 0xdfe8ff, rain: 0.32, flickerAll: 0, bolt: [7, 18] },   // 1: the quiet quay
-  { fog: 0.030, bg: 0x0c1420, hemi: 1.1, moonC: 0xcfd8ea, rain: 0.26, flickerAll: 0, bolt: [9, 20] },   // 2: the drowned mist
-  { fog: 0.020, bg: 0x05070d, hemi: 0.55, moonC: 0x8f98b8, rain: 0.34, flickerAll: 1, bolt: [8, 16] },  // 3: the blackout
-  { fog: 0.018, bg: 0x140b10, hemi: 1.0, moonC: 0xff7a5a, rain: 0.4, flickerAll: 0, bolt: [7, 15] },    // 4: the blood moon
-  { fog: 0.021, bg: 0x0b1020, hemi: 1.2, moonC: 0xdfe8ff, rain: 0.6, flickerAll: 0, bolt: [2.5, 6] },   // 5: the storm
-  { fog: 0.024, bg: 0x081209, hemi: 0.95, moonC: 0xbfe8c8, rain: 0.3, flickerAll: 0.5, bolt: [6, 12] }, // boss: the counting house
+  { fog: 0.016, bg: 0x0a0e18, hemi: 1.3, moonC: 0xdfe8ff, rain: 0.32, flickerAll: 0, bolt: [7, 18], cloud: 0.46 },   // 1: the quiet quay
+  { fog: 0.030, bg: 0x0c1420, hemi: 1.1, moonC: 0xcfd8ea, rain: 0.26, flickerAll: 0, bolt: [9, 20], cloud: 0.38 },   // 2: the drowned mist
+  { fog: 0.020, bg: 0x05070d, hemi: 0.55, moonC: 0x8f98b8, rain: 0.34, flickerAll: 1, bolt: [8, 16], cloud: 0.3 },  // 3: the blackout
+  { fog: 0.018, bg: 0x140b10, hemi: 1.0, moonC: 0xff7a5a, rain: 0.4, flickerAll: 0, bolt: [7, 15], cloud: 0.52 },    // 4: the blood moon
+  { fog: 0.021, bg: 0x0b1020, hemi: 1.2, moonC: 0xdfe8ff, rain: 0.6, flickerAll: 0, bolt: [2.5, 6], cloud: 0.22 },   // 5: the storm
+  { fog: 0.024, bg: 0x081209, hemi: 0.95, moonC: 0xbfe8c8, rain: 0.3, flickerAll: 0.5, bolt: [6, 12], cloud: 0.34 }, // boss: the counting house
 ];
 
 export function buildWorld(scene, sfx) {
   const BG_FLASH = new THREE.Color(0x3a4a72);
-  scene.background = new THREE.Color(0x0a0e18);
   scene.fog = new THREE.FogExp2(0x0a0e18, 0.016);
 
   // current & target mood, lerped in update()
   const cur = {
-    fog: 0.016, hemi: 1.3, rain: 0.32, flickerAll: 0,
+    fog: 0.016, hemi: 1.3, rain: 0.32, flickerAll: 0, cloud: 0.46,
     bg: new THREE.Color(0x0a0e18), moonC: new THREE.Color(0xdfe8ff),
   };
   let mood = MOODS[0];
@@ -158,29 +158,9 @@ export function buildWorld(scene, sfx) {
     lampGlows.push({ halo, phase: rand(0, 20), rnd: Math.random() });
   }
 
-  // moon + halo + stars
-  const moon = new THREE.Mesh(
-    new THREE.CircleGeometry(9, 32),
-    new THREE.MeshBasicMaterial({ color: 0xdfe8ff, fog: false })
-  );
-  moon.position.set(-45, 65, -260);
-  moon.lookAt(0, 1.6, 0);
-  scene.add(moon);
-  const moonHalo = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowTexture('rgba(190,210,255,0.55)', 'rgba(120,150,230,0.15)'),
-    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
-  }));
-  moonHalo.position.copy(moon.position);
-  moonHalo.scale.setScalar(55);
-  scene.add(moonHalo);
-
-  const starGeo = new THREE.BufferGeometry();
-  const starPos = [];
-  for (let i = 0; i < 700; i++) {
-    starPos.push(rand(-250, 250), rand(40, 180), rand(-350, 50));
-  }
-  starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
-  scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xaab6d8, size: 0.7, fog: false })));
+  // sky dome: gradient, stars, cratered moon, drifting storm clouds
+  const sky = createSky(scene);
+  const ZENITH = new THREE.Color();
 
   // ---- rain: streaked line segments recycled around the camera ----
   const RAIN_N = 500;
@@ -253,14 +233,17 @@ export function buildWorld(scene, sfx) {
       cur.hemi += (mood.hemi - cur.hemi) * mk;
       cur.rain += (mood.rain - cur.rain) * mk;
       cur.flickerAll += (mood.flickerAll - cur.flickerAll) * mk;
+      cur.cloud += (mood.cloud - cur.cloud) * mk;
       cur.bg.lerp(new THREE.Color(mood.bg), mk);
       cur.moonC.lerp(new THREE.Color(mood.moonC), mk);
       scene.fog.density = cur.fog;
       hemi.intensity = cur.hemi;
       rain.material.opacity = cur.rain;
-      moon.material.color.copy(cur.moonC);
-      moonHalo.material.color.copy(cur.moonC);
       moonlight.color.copy(cur.moonC);
+      sky.dome.position.copy(camPos);
+      sky.uniforms.time.value = t;
+      sky.uniforms.cover.value = cur.cloud;
+      sky.uniforms.moonColor.value.copy(cur.moonC);
 
       // ripple the canal near the camera
       const pos = waterGeo.attributes.position;
@@ -328,13 +311,15 @@ export function buildWorld(scene, sfx) {
         // double-pulse flicker
         const k = strike * (0.55 + 0.45 * Math.sin(strike * 34));
         bolt.intensity = k * 4.5;
-        scene.background.lerpColors(cur.bg, BG_FLASH, k * 0.8);
         scene.fog.color.lerpColors(cur.bg, BG_FLASH, k * 0.55);
+        sky.uniforms.flash.value = k;
       } else {
         bolt.intensity = 0;
-        scene.background.copy(cur.bg);
         scene.fog.color.copy(cur.bg);
+        sky.uniforms.flash.value = 0;
       }
+      sky.uniforms.horizon.value.copy(scene.fog.color);
+      sky.uniforms.zenith.value.copy(ZENITH.copy(cur.bg).multiplyScalar(0.25));
     },
   };
 }
