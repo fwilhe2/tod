@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Zombie } from './zombie.js';
+import { Fx } from './fx.js';
 import { pickWord, BOSS_PHRASES, QUESTION, ENDINGS } from './words.js';
 
 const WAVES = [
@@ -16,10 +17,7 @@ function rand(a, b) { return a + Math.random() * (b - a); }
 
 const $ = (id) => document.getElementById(id);
 
-const GORE_GEO = new THREE.BoxGeometry(0.13, 0.13, 0.13);
-const POOL_GEO = new THREE.CircleGeometry(0.9, 14);
 const BULLET_GEO = new THREE.CapsuleGeometry(0.03, 0.55, 3, 6);
-const SPARK_GEO = new THREE.BoxGeometry(0.05, 0.05, 0.05);
 const SHELL_GEO = new THREE.BoxGeometry(0.018, 0.018, 0.05);
 const RING_GEO = new THREE.RingGeometry(0.3, 0.38, 28);
 const BULLET_SPEED = 75;
@@ -48,7 +46,8 @@ export class Game {
 
     this.zombies = [];
     this.target = null;
-    this.effects = [];   // particles + tracers {obj, life, ttl, vel?}
+    this.effects = [];   // tracers, limbs, shells, rings, popups {obj, life, ttl, vel?}
+    this.fx = new Fx(scene); // instanced blood, gibs, decals, sparks, smoke
     this.baseZ = 0;      // camera rail position
     this.advanceFrom = 0;
     this.shakeT = 0;
@@ -249,7 +248,7 @@ export class Game {
       this.spawnGore(this.boss.headWorldPos(new THREE.Vector3()), 70, 2.2);
       this.spawnBloodPool(this.boss.group.position);
       const skull = this.boss.decapitate();
-      if (skull) this.flingPart(skull, 2);
+      if (skull) { this.flingPart(skull, 2); this.spawnFountain(this.boss, 1.6); }
       this.boss.die();
     }
     this.sfx.kill();
@@ -483,6 +482,12 @@ export class Game {
     this.sfx.shot(this.combo);
     this.gun.fire();
     this.spawnShell();
+    const muzzle = this.gun.muzzleWorldPos(new THREE.Vector3());
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    this.fx.puff(muzzle, {
+      color: 0x8c9098, size: 0.1, grow: 4, ttl: 1.1, opacity: 0.22,
+      vel: fwd.multiplyScalar(1.2).add(new THREE.Vector3(0, 0.35, 0)),
+    });
     if (z) {
       this.spawnBullet(z);
       z.hit?.();
@@ -513,7 +518,7 @@ export class Game {
     if (this.post) this.post.punch = 1;
     // the last letter takes the head clean off
     const skull = z.decapitate();
-    if (skull) this.flingPart(skull, 1.5);
+    if (skull) { this.flingPart(skull, 1.5); this.spawnFountain(z); }
     if (z.special === 'coffee' && this.hp < MAX_HP) {
       this.hp++;
       this.sfx.heart();
@@ -608,23 +613,14 @@ export class Game {
       baseScale: scl.clone(), spin: rand(6, 15),
       vel: new THREE.Vector3(rand(-2.5, 2.5) * power, rand(2, 4.5) * power, rand(-2.5, 2.5) * power),
     });
-    this.spawnGore(pos, 4, 0.5);
+    this.spawnGore(pos, 10, 0.6);
   }
 
   spawnSplash(pos) {
     this.sfx.splash();
-    for (let i = 0; i < 14; i++) {
-      const m = new THREE.Mesh(SPARK_GEO, new THREE.MeshBasicMaterial({
-        color: Math.random() < 0.5 ? 0x9fc0e8 : 0xd8ecff,
-        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
-      }));
-      m.position.set(pos.x, -0.4, pos.z);
-      this.scene.add(m);
-      this.effects.push({
-        kind: 'spark', obj: m, life: 0, ttl: rand(0.35, 0.6),
-        vel: new THREE.Vector3(rand(-3, 3), rand(2, 5), rand(-3, 3)),
-      });
-    }
+    const p = new THREE.Vector3(pos.x, -0.5, pos.z);
+    this.fx.spray(p, null, 26, 1.2, 0x9fc0e8);
+    this.fx.puff(p, { color: 0xb8cce0, size: 0.8, grow: 2.5, ttl: 0.8, opacity: 0.3 });
     this.spawnRing(new THREE.Vector3(pos.x, -0.55, pos.z), 0x9fc0e8, true);
   }
 
@@ -656,21 +652,12 @@ export class Game {
     });
   }
 
-  // where the bullet lands: sparks + a spurt of gore
-  impact(pos) {
-    for (let i = 0; i < 7; i++) {
-      const m = new THREE.Mesh(SPARK_GEO, new THREE.MeshBasicMaterial({
-        color: Math.random() < 0.5 ? 0xffd070 : 0xfff4c0,
-        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
-      }));
-      m.position.copy(pos);
-      this.scene.add(m);
-      this.effects.push({
-        kind: 'spark', obj: m, life: 0, ttl: rand(0.15, 0.35),
-        vel: new THREE.Vector3(rand(-5, 5), rand(-2, 5), rand(-5, 5)),
-      });
-    }
-    this.spawnGore(pos, 5, 0.55);
+  // where the bullet lands: sparks, a spurt out the back, red mist, a flash
+  impact(pos, dir) {
+    this.fx.spark(pos, 9, 0xffc870, 6);
+    this.fx.spray(pos, dir, 9, 0.7);
+    this.fx.puff(pos, { color: 0x6a0808, size: 0.25, grow: 2.5, ttl: 0.5, opacity: 0.5 });
+    this.fx.impactLight(pos, 0.6);
   }
 
   spawnShell() {
@@ -722,35 +709,18 @@ export class Game {
   }
 
   spawnGore(pos, n = 26, force = 1) {
-    for (let i = 0; i < n; i++) {
-      const r = Math.random();
-      const mat = new THREE.MeshBasicMaterial({
-        color: r < 0.45 ? 0x9c1818 : r < 0.75 ? 0x701010 : r < 0.9 ? 0xb42424 : 0x4a0b0b,
-        transparent: true,
-      });
-      const m = new THREE.Mesh(GORE_GEO, mat);
-      m.position.copy(pos);
-      m.scale.setScalar(rand(0.5, 1.9));
-      m.rotation.set(rand(0, 6), rand(0, 6), rand(0, 6));
-      this.scene.add(m);
-      this.effects.push({
-        obj: m, life: 0, ttl: rand(0.7, 1.2),
-        vel: new THREE.Vector3(rand(-4.5, 4.5) * force, rand(1.5, 7) * force, rand(-4.5, 4.5) * force),
-      });
-    }
+    this.fx.spray(pos, null, n, force);
+    this.fx.gibs(pos, Math.ceil(n / 7), force);
+    this.fx.puff(pos, { color: 0x5a0606, size: 0.35 * force, grow: 3, ttl: 0.9, opacity: 0.45 });
   }
 
   spawnBloodPool(pos) {
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x581010, transparent: true, opacity: 0.6, depthWrite: false,
-    });
-    const m = new THREE.Mesh(POOL_GEO, mat);
-    m.position.set(pos.x, 0.03 + Math.random() * 0.01, pos.z);
-    m.rotation.set(-Math.PI / 2, 0, rand(0, Math.PI * 2));
-    m.scale.set(rand(0.8, 1.7), rand(0.8, 1.7), 1);
-    m.renderOrder = 1;
-    this.scene.add(m);
-    this.effects.push({ obj: m, life: 0, ttl: 20, baseOp: 0.6 });
+    this.fx.splat(pos, rand(1.6, 2.4), 1.4);
+  }
+
+  // blood pumping from the neck stump for a moment after decapitation
+  spawnFountain(z, ttl = 0.6) {
+    this.effects.push({ kind: 'fountain', zombie: z, life: 0, ttl });
   }
 
   // ---------------- per-frame update ----------------
@@ -802,6 +772,7 @@ export class Game {
     }
 
     // effects always tick
+    this.fx.update(dt);
     for (let i = this.effects.length - 1; i >= 0; i--) {
       const fx = this.effects[i];
       fx.life += dt;
@@ -809,12 +780,17 @@ export class Game {
       switch (fx.kind) {
         case 'bullet':
           fx.obj.position.addScaledVector(fx.vel, dt);
-          if (p >= 1) this.impact(fx.end);
+          if (p >= 1) this.impact(fx.end, fx.vel.clone().normalize());
           break;
-        case 'spark':
-          fx.obj.position.addScaledVector(fx.vel, dt);
-          fx.obj.material.opacity = 1 - p;
+        case 'fountain': {
+          const z = fx.zombie;
+          if (!z.dead) {
+            const neck = z.body.localToWorld(new THREE.Vector3(0, 1.2, 0.12));
+            const up = new THREE.Vector3(0, 1, 0).applyQuaternion(z.body.getWorldQuaternion(new THREE.Quaternion()));
+            this.fx.spray(neck, up.multiplyScalar(1.4 * (1 - p)), 3, 0.5);
+          }
           break;
+        }
         case 'shell':
           fx.vel.y -= 14 * dt;
           fx.obj.position.addScaledVector(fx.vel, dt);
@@ -823,8 +799,8 @@ export class Game {
           fx.obj.material.opacity = 1 - p * p;
           break;
         case 'ring':
-          fx.obj.scale.setScalar(1 + p * 9);
-          fx.obj.material.opacity = 0.9 * (1 - p);
+          fx.obj.scale.setScalar(1 + p * 5);
+          fx.obj.material.opacity = 0.55 * (1 - p) * (1 - p);
           break;
         case 'popup':
           fx.obj.position.y += 1.5 * dt;
@@ -835,23 +811,17 @@ export class Game {
           fx.obj.position.addScaledVector(fx.vel, dt);
           fx.obj.rotation.x += fx.spin * dt;
           fx.obj.rotation.y += fx.spin * 0.6 * dt;
+          if (Math.random() < 0.3) this.fx.spray(fx.obj.position, null, 1, 0.2); // drips as it flies
           if (fx.obj.position.y < 0.08) {
+            if (fx.vel.y < -2) this.fx.splat(fx.obj.position, rand(0.3, 0.5));
             fx.obj.position.y = 0.08;
             fx.vel.set(fx.vel.x * 0.4, Math.abs(fx.vel.y) > 1.5 ? -fx.vel.y * 0.25 : 0, fx.vel.z * 0.4);
           }
           if (p > 0.75) fx.obj.scale.copy(fx.baseScale).multiplyScalar(Math.max(0.001, 1 - (p - 0.75) / 0.25));
           break;
-        default: // gore chunks & blood pools
-          if (fx.vel) {
-            fx.vel.y -= 12 * dt;
-            fx.obj.position.addScaledVector(fx.vel, dt);
-            if (fx.obj.position.y < 0.05) { fx.obj.position.y = 0.05; fx.vel.set(0, 0, 0); }
-            fx.obj.material.opacity = 1 - p;
-          } else {
-            fx.obj.material.opacity = (fx.baseOp ?? 0.9) * (1 - p);
-          }
       }
       if (fx.life >= fx.ttl) {
+        if (!fx.obj) { this.effects.splice(i, 1); continue; }
         this.scene.remove(fx.obj);
         if (!fx.keepMats) { // limbs borrow their zombie's materials
           if (fx.ownGeo) fx.obj.geometry.dispose();

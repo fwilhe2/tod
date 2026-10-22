@@ -12,7 +12,7 @@ const SKIN_MAPS = skinMaps();
 const CLOTH_MAPS = clothMaps();
 const SKIN_TEX = { map: tex(SKIN_MAPS.albedo, { srgb: true }), normalMap: tex(SKIN_MAPS.normal) };
 const CLOTH_TEX = { map: tex(CLOTH_MAPS.albedo, { srgb: true, repeat: [2, 2] }), normalMap: tex(CLOTH_MAPS.normal, { repeat: [2, 2] }) };
-const HAIR = [0x1a1612, 0x2a2018, 0x3a3630, 0x55504a, 0x14100c];
+const HAIR = [0x1a1612, 0x2a2018, 0x2e2a26, 0x3a332c, 0x14100c];
 const TIES = [0x5a1018, 0x1c2a4a, 0x2c3a24, 0x4a3a10];
 
 // soft contact shadow under the feet
@@ -315,7 +315,7 @@ export class Zombie {
     if (Math.random() < 0.7) {
       const hairMat = this.mat(rimmed(new THREE.MeshStandardMaterial({ color: pick(HAIR), roughness: 0.75 }), 0.08, 0x9aa8b8));
       const parts = [];
-      const cap = lump(new THREE.SphereGeometry(0.315, 16, 10, 0, Math.PI * 2, 0, rand(1.1, 1.5)), 0.025, this.seed + 4);
+      const cap = lump(new THREE.SphereGeometry(0.31, 16, 10, 0, Math.PI * 2, 0, rand(0.8, 1.25)), 0.045, this.seed + 4);
       cap.rotateX(-0.45); // sits back on the crown, leaving the brow bare
       cap.scale(0.78, 1.02, 0.92);
       parts.push(cap);
