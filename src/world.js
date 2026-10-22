@@ -142,12 +142,12 @@ function wetSurface(mat, mirror, frag, extra = {}, glsl = '') {
 
 // Per-district atmospheres, crossfaded during the advance between waves.
 const MOODS = [
-  { fog: 0.016, bg: 0x0a0e18, hemi: 1.3, moonC: 0xdfe8ff, rain: 0.32, flickerAll: 0, bolt: [7, 18], cloud: 0.46 },   // 1: the quiet quay
-  { fog: 0.030, bg: 0x0c1420, hemi: 1.1, moonC: 0xcfd8ea, rain: 0.26, flickerAll: 0, bolt: [9, 20], cloud: 0.38 },   // 2: the drowned mist
-  { fog: 0.020, bg: 0x05070d, hemi: 0.55, moonC: 0x8f98b8, rain: 0.34, flickerAll: 1, bolt: [8, 16], cloud: 0.3 },  // 3: the blackout
-  { fog: 0.018, bg: 0x140b10, hemi: 1.0, moonC: 0xff7a5a, rain: 0.4, flickerAll: 0, bolt: [7, 15], cloud: 0.52 },    // 4: the blood moon
-  { fog: 0.021, bg: 0x0b1020, hemi: 1.2, moonC: 0xdfe8ff, rain: 0.6, flickerAll: 0, bolt: [2.5, 6], cloud: 0.22 },   // 5: the storm
-  { fog: 0.024, bg: 0x081209, hemi: 0.95, moonC: 0xbfe8c8, rain: 0.3, flickerAll: 0.5, bolt: [6, 12], cloud: 0.34 }, // boss: the counting house
+  { fog: 0.016, bg: 0x0a0e18, hemi: 1.3, moonC: 0xdfe8ff, rain: 0.32, flickerAll: 0, bolt: [7, 18], cloud: 0.46, mist: 1 },   // 1: the quiet quay
+  { fog: 0.030, bg: 0x0c1420, hemi: 1.1, moonC: 0xcfd8ea, rain: 0.26, flickerAll: 0, bolt: [9, 20], cloud: 0.38, mist: 2.6 },   // 2: the drowned mist
+  { fog: 0.020, bg: 0x05070d, hemi: 0.55, moonC: 0x8f98b8, rain: 0.34, flickerAll: 1, bolt: [8, 16], cloud: 0.3, mist: 1.2 },  // 3: the blackout
+  { fog: 0.018, bg: 0x140b10, hemi: 1.0, moonC: 0xff7a5a, rain: 0.4, flickerAll: 0, bolt: [7, 15], cloud: 0.52, mist: 0.9 },    // 4: the blood moon
+  { fog: 0.021, bg: 0x0b1020, hemi: 1.2, moonC: 0xdfe8ff, rain: 0.6, flickerAll: 0, bolt: [2.5, 6], cloud: 0.22, mist: 0.7 },   // 5: the storm
+  { fog: 0.024, bg: 0x081209, hemi: 0.95, moonC: 0xbfe8c8, rain: 0.3, flickerAll: 0.5, bolt: [6, 12], cloud: 0.34, mist: 1.8 }, // boss: the counting house
 ];
 
 export function buildWorld(scene, sfx, renderer) {
@@ -156,7 +156,7 @@ export function buildWorld(scene, sfx, renderer) {
 
   // current & target mood, lerped in update()
   const cur = {
-    fog: 0.016, hemi: 1.3, rain: 0.32, flickerAll: 0, cloud: 0.46,
+    fog: 0.016, hemi: 1.3, rain: 0.32, flickerAll: 0, cloud: 0.46, mist: 1,
     bg: new THREE.Color(0x0a0e18), moonC: new THREE.Color(0xdfe8ff),
   };
   let mood = MOODS[0];
@@ -388,7 +388,7 @@ export function buildWorld(scene, sfx, renderer) {
     m.scale.set(rand(10, 18), rand(3.5, 6), 1);
     m.position.set(rand(-12, 12), rand(0.6, 1.6), -i * 20 + rand(-6, 6));
     scene.add(m);
-    mists.push({ m, drift: rand(0.12, 0.4) * (Math.random() < 0.5 ? -1 : 1), spin: rand(-0.02, 0.02) });
+    mists.push({ m, op: m.material.opacity, drift: rand(0.12, 0.4) * (Math.random() < 0.5 ? -1 : 1), spin: rand(-0.02, 0.02) });
   }
 
   // ---- drifting embers / motes that catch the bloom ----
@@ -471,6 +471,8 @@ export function buildWorld(scene, sfx, renderer) {
       cur.rain += (mood.rain - cur.rain) * mk;
       cur.flickerAll += (mood.flickerAll - cur.flickerAll) * mk;
       cur.cloud += (mood.cloud - cur.cloud) * mk;
+      cur.mist += (mood.mist - cur.mist) * mk;
+      sky.uniforms.haze.value = Math.min(1, Math.max(0, (cur.fog - 0.016) / 0.016)) * 0.8;
       cur.bg.lerp(new THREE.Color(mood.bg), mk);
       cur.moonC.lerp(new THREE.Color(mood.moonC), mk);
       scene.fog.density = cur.fog;
@@ -522,7 +524,8 @@ export function buildWorld(scene, sfx, renderer) {
       rainAmt.value = cur.rain / 0.32;
 
       // mist drifts sideways and slowly rotates; recycled along the rail
-      for (const { m, drift, spin } of mists) {
+      for (const { m, op, drift, spin } of mists) {
+        m.material.opacity = Math.min(1, op * cur.mist);
         m.position.x += drift * dt;
         m.material.rotation += spin * dt;
         if (m.position.x > 14) m.position.x = -14;

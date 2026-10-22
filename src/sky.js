@@ -15,7 +15,7 @@ const vert = /* glsl */`
 
 const frag = /* glsl */`
   uniform vec3 horizon, zenith, moonColor, moonDir;
-  uniform float time, flash, cover;
+  uniform float time, flash, cover, haze;
   varying vec3 vDir;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -76,6 +76,8 @@ const frag = /* glsl */`
     // whole sky flickers with the strike
     col += vec3(0.18, 0.22, 0.38) * flash * smoothstep(-0.1, 0.4, h);
 
+    // thick fog swallows the sky from the horizon up
+    col = mix(col, horizon * 1.15, haze * (1.0 - smoothstep(0.0, 0.7, h) * 0.6));
     // melt into fog at and below the horizon
     col = mix(col, horizon, smoothstep(0.08, -0.04, h));
     gl_FragColor = vec4(col, 1.0);
@@ -92,6 +94,7 @@ export function createSky(scene) {
     time: { value: 0 },
     flash: { value: 0 },
     cover: { value: 0.42 },
+    haze: { value: 0 },
   };
   const mat = new THREE.ShaderMaterial({
     uniforms, vertexShader: vert, fragmentShader: frag,
