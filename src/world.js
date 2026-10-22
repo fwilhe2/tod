@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { createSky } from './sky.js';
+import { cobbleMaps, puddleMap, tex } from './textures.js';
+import { createMirror, REFLECT_GLSL, NO_REFLECT_LAYER } from './reflect.js';
 
 function rand(a, b) { return a + Math.random() * (b - a); }
 
@@ -24,23 +26,6 @@ function facadeTexture() {
   return tex;
 }
 
-function cobbleTexture() {
-  const cv = document.createElement('canvas');
-  cv.width = 128; cv.height = 128;
-  const c = cv.getContext('2d');
-  c.fillStyle = '#151821';
-  c.fillRect(0, 0, 128, 128);
-  for (let i = 0; i < 260; i++) {
-    const g = 18 + Math.random() * 22;
-    c.fillStyle = `rgb(${g},${g + 2},${g + 8})`;
-    c.fillRect(Math.random() * 128, Math.random() * 128, rand(4, 12), rand(3, 8));
-  }
-  const tex = new THREE.CanvasTexture(cv);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(8, 60);
-  return tex;
-}
-
 // soft radial blob, used for mist, lamp glow, moon halo
 function glowTexture(inner, mid) {
   const cv = document.createElement('canvas');
@@ -55,6 +40,23 @@ function glowTexture(inner, mid) {
   return new THREE.CanvasTexture(cv);
 }
 
+// Patch a standard material so it can sample the ground mirror; `frag`
+// edits the fragment shader, `extra` adds uniforms.
+function wetSurface(mat, mirror, frag, extra = {}) {
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.tReflect = { value: mirror.texture };
+    shader.uniforms.reflMatrix = { value: mirror.matrix };
+    Object.assign(shader.uniforms, extra);
+    shader.vertexShader = 'varying vec3 vWPos;\n' + shader.vertexShader.replace(
+      '#include <project_vertex>',
+      '#include <project_vertex>\n vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;'
+    );
+    shader.fragmentShader = 'varying vec3 vWPos;\n'
+      + Object.keys(extra).map((k) => `uniform float ${k};\n`).join('')
+      + REFLECT_GLSL + frag(shader.fragmentShader);
+  };
+}
+
 // Per-district atmospheres, crossfaded during the advance between waves.
 const MOODS = [
   { fog: 0.016, bg: 0x0a0e18, hemi: 1.3, moonC: 0xdfe8ff, rain: 0.32, flickerAll: 0, bolt: [7, 18], cloud: 0.46 },   // 1: the quiet quay
@@ -65,7 +67,7 @@ const MOODS = [
   { fog: 0.024, bg: 0x081209, hemi: 0.95, moonC: 0xbfe8c8, rain: 0.3, flickerAll: 0.5, bolt: [6, 12], cloud: 0.34 }, // boss: the counting house
 ];
 
-export function buildWorld(scene, sfx) {
+export function buildWorld(scene, sfx, renderer) {
   const BG_FLASH = new THREE.Color(0x3a4a72);
   scene.fog = new THREE.FogExp2(0x0a0e18, 0.016);
 
@@ -89,21 +91,61 @@ export function buildWorld(scene, sfx) {
   bolt.position.set(20, 80, -60);
   scene.add(bolt);
 
-  // street
-  const street = new THREE.Mesh(
-    new THREE.PlaneGeometry(24, 500),
-    new THREE.MeshLambertMaterial({ map: cobbleTexture() })
-  );
+  // wet cobbled street: PBR setts, glossy puddles that mirror the scene
+  const mirror = createMirror(renderer);
+  const cobble = cobbleMaps();
+  const puddles = tex(puddleMap(), { repeat: [2, 25] });
+  const streetMat = new THREE.MeshStandardMaterial({
+    map: tex(cobble.albedo, { srgb: true, repeat: [12, 250] }),
+    normalMap: tex(cobble.normal, { repeat: [12, 250] }),
+    normalScale: new THREE.Vector2(1.1, 1.1),
+    roughnessMap: puddles,
+    roughness: 1,
+    metalness: 0,
+  });
+  wetSurface(streetMat, mirror, (s) => s.replace(
+    '#include <roughnessmap_fragment>',
+    `#include <roughnessmap_fragment>
+     float wet = 1.0 - smoothstep(0.08, 0.55, roughnessFactor);
+     diffuseColor.rgb *= mix(1.0, 0.4, wet); // standing water darkens the stone`
+  ).replace(
+    '#include <normal_fragment_maps>',
+    `#include <normal_fragment_maps>
+     normal = normalize(mix(normal, normalize(vNormal), wet * 0.92)); // puddles are flat`
+  ).replace(
+    '#include <emissivemap_fragment>',
+    `#include <emissivemap_fragment>
+     {
+       vec3 V = normalize(cameraPosition - vWPos);
+       float F = 0.04 + 0.96 * pow(1.0 - clamp(V.y, 0.0, 1.0), 5.0);
+       vec2 bump = mapN.xy;
+       vec3 refl = sampleReflection(vWPos, bump * mix(0.03, 0.003, wet), mix(0.01, 0.0012, wet));
+       totalEmissiveRadiance += refl * mix(0.1, 0.9, wet) * mix(0.3, 1.0, F);
+     }`
+  ));
+  const street = new THREE.Mesh(new THREE.PlaneGeometry(24, 500), streetMat);
   street.rotation.x = -Math.PI / 2;
   street.position.set(0, 0, -200);
   scene.add(street);
 
-  // canal (right side)
+  // canal (right side): black water mirroring the far bank, rippled by waves
   const waterGeo = new THREE.PlaneGeometry(14, 500, 12, 160);
-  const water = new THREE.Mesh(
-    waterGeo,
-    new THREE.MeshPhongMaterial({ color: 0x0c1a2e, shininess: 160, specular: 0x8ab0e0 })
-  );
+  const waterMat = new THREE.MeshStandardMaterial({ color: 0x03070d, roughness: 0.12, metalness: 0 });
+  const waterTime = { value: 0 };
+  wetSurface(waterMat, mirror, (s) => s.replace(
+    '#include <emissivemap_fragment>',
+    `#include <emissivemap_fragment>
+     {
+       vec3 V = normalize(cameraPosition - vWPos);
+       float F = 0.06 + 0.94 * pow(1.0 - clamp(V.y, 0.0, 1.0), 5.0);
+       vec2 w = vec2(
+         sin(vWPos.z * 1.7 + waterTime * 1.9) * 0.6 + sin(vWPos.x * 2.9 - vWPos.z * 0.8 + waterTime * 2.6) * 0.4,
+         sin(vWPos.z * 2.3 - waterTime * 1.4) * 0.5 + sin(vWPos.x * 1.9 + waterTime * 1.1) * 0.5);
+       vec3 refl = sampleReflection(vWPos, w * 0.008, 0.002);
+       totalEmissiveRadiance += refl * mix(0.45, 1.0, F) * vec3(0.8, 0.9, 1.0);
+     }`
+  ), { waterTime });
+  const water = new THREE.Mesh(waterGeo, waterMat);
   water.rotation.x = -Math.PI / 2;
   water.position.set(19.5, -0.7, -200);
   scene.add(water);
@@ -182,6 +224,7 @@ export function buildWorld(scene, sfx) {
     })
   );
   rain.frustumCulled = false;
+  rain.layers.set(NO_REFLECT_LAYER);
   scene.add(rain);
 
   // ---- ground mist drifting over the cobbles ----
@@ -212,6 +255,7 @@ export function buildWorld(scene, sfx) {
     blending: THREE.AdditiveBlending, depthWrite: false,
   }));
   emberPts.frustumCulled = false;
+  emberPts.layers.set(NO_REFLECT_LAYER);
   scene.add(emberPts);
 
   // ---- lightning state ----
@@ -220,11 +264,16 @@ export function buildWorld(scene, sfx) {
 
   let t = 0;
   return {
+    mirror,
+    renderReflection(camera) {
+      mirror.render(scene, camera, [street, water]);
+    },
     setMood(i) {
       mood = MOODS[Math.min(i, MOODS.length - 1)];
     },
     update(dt, camPos) {
       t += dt;
+      waterTime.value = t;
       lamp.position.set(camPos.x + 2, 4.2, camPos.z - 8);
 
       // crossfade the district atmosphere

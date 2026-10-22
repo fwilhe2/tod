@@ -4,6 +4,7 @@ import { Game } from './game.js';
 import { Gun } from './gun.js';
 import { Sfx } from './audio.js';
 import { createPost } from './post.js';
+import { NO_REFLECT_LAYER } from './reflect.js';
 
 const app = document.getElementById('app');
 
@@ -20,8 +21,11 @@ camera.position.set(0, 1.6, 0);
 scene.add(camera); // the gun rides on the camera
 
 const sfx = new Sfx();
-const world = buildWorld(scene, sfx);
+const world = buildWorld(scene, sfx, renderer);
 const gun = new Gun(camera);
+// the first-person gun lives on its own layer so puddles don't reflect it
+camera.layers.enable(NO_REFLECT_LAYER);
+gun.group.traverse((o) => { if (o.isMesh) o.layers.set(NO_REFLECT_LAYER); });
 const game = new Game(scene, camera, sfx, gun);
 game.world = world;
 if (new URLSearchParams(location.search).has('debug')) window.game = game;
@@ -36,6 +40,7 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   post.resize(window.innerWidth, window.innerHeight);
+  world.mirror.resize();
 });
 
 const timer = new THREE.Timer();
@@ -46,5 +51,6 @@ renderer.setAnimationLoop((time) => {
     const dt = game.advance(rawDt); // bullet-time may dilate the frame
     world.update(dt, camera.position);
   }
+  world.renderReflection(camera);
   post.render(rawDt, timer.getElapsed());
 });
