@@ -96,6 +96,7 @@ function lump(geo, amt, seed = 0) {
 // Successive zombies cycle through these label heights so words on
 // overlapping zombies don't cover each other.
 const LABEL_HEIGHTS = [2.9, 3.6, 4.3];
+const LABEL_FONT = 'bold 56px "Courier New", ui-monospace, monospace';
 let labelSlot = 0;
 
 export class Zombie {
@@ -574,13 +575,15 @@ export class Zombie {
   makeLabel() {
     this.canvas = document.createElement('canvas');
     this.lctx = this.canvas.getContext('2d');
-    const font = 'bold 58px "Courier New", monospace';
-    this.lctx.font = font;
-    const w = Math.ceil(this.lctx.measureText(this.word).width) + 36;
+    this.lctx.font = LABEL_FONT;
+    const w = Math.ceil(this.lctx.measureText(this.word).width) + 48;
     this.canvas.width = w;
-    this.canvas.height = 84;
+    this.canvas.height = 96;
     this.tex = new THREE.CanvasTexture(this.canvas);
-    const mat = new THREE.SpriteMaterial({ map: this.tex, transparent: true, depthTest: false });
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    // dimmed below the bloom threshold so the words stay crisp; only the
+    // typed letters (drawn hotter) are allowed to glow
+    const mat = new THREE.SpriteMaterial({ map: this.tex, transparent: true, depthTest: false, color: 0xb8b8b8 });
     this.label = new THREE.Sprite(mat);
     this.label.position.set(0, LABEL_HEIGHTS[labelSlot++ % LABEL_HEIGHTS.length], 0);
     this.label.renderOrder = 10;
@@ -591,33 +594,50 @@ export class Zombie {
 
   drawLabel(targeted) {
     const c = this.lctx, cv = this.canvas;
-    c.clearRect(0, 0, cv.width, cv.height);
-    c.font = 'bold 58px "Courier New", monospace';
-    c.textBaseline = 'middle';
-    // backdrop
-    c.fillStyle = targeted ? 'rgba(10,14,8,0.96)' : 'rgba(4,6,12,0.88)';
-    c.fillRect(0, 8, cv.width, 68);
+    const W = cv.width, H = cv.height;
+    c.clearRect(0, 0, W, H);
+    const x0 = 4, y0 = 10, bw = W - 8, bh = 64, r = 16;
+    const pill = () => { c.beginPath(); c.roundRect(x0, y0, bw, bh, r); };
+    // backdrop: dark glassy pill
+    const g = c.createLinearGradient(0, y0, 0, y0 + bh);
+    g.addColorStop(0, targeted ? 'rgba(28,20,8,0.92)' : 'rgba(12,14,20,0.78)');
+    g.addColorStop(1, targeted ? 'rgba(10,6,2,0.95)' : 'rgba(4,5,9,0.86)');
+    c.fillStyle = g;
+    pill();
+    c.fill();
+    const amber = targeted || this.special === 'coffee';
+    c.lineWidth = targeted ? 3 : 2;
+    c.strokeStyle = amber ? 'rgba(255,196,96,0.95)' : 'rgba(160,176,200,0.35)';
+    pill();
+    c.stroke();
     if (targeted) {
-      c.strokeStyle = 'rgba(255,212,121,0.9)';
-      c.lineWidth = 3;
-      c.strokeRect(1, 9, cv.width - 3, 66);
+      // pointer down to the ghoul it belongs to
+      c.fillStyle = 'rgba(255,196,96,0.95)';
+      c.beginPath();
+      c.moveTo(W / 2 - 9, y0 + bh + 1); c.lineTo(W / 2 + 9, y0 + bh + 1); c.lineTo(W / 2, y0 + bh + 13);
+      c.fill();
     }
-    if (!targeted && this.special === 'coffee') {
-      c.strokeStyle = 'rgba(255,190,60,0.75)'; // the barista's label glints amber
-      c.lineWidth = 3;
-      c.strokeRect(1, 9, cv.width - 3, 66);
-    }
+
+    c.font = LABEL_FONT;
+    c.textBaseline = 'middle';
+    c.lineJoin = 'round';
     const done = this.word.slice(0, this.progress);
     const todo = this.word.slice(this.progress);
-    let x = 18;
-    c.shadowColor = 'rgba(255,190,80,0.9)';
-    c.shadowBlur = targeted ? 12 : 0;
-    c.fillStyle = '#ffd479';
-    c.fillText(done, x, 44);
+    const ty = y0 + bh / 2 + 3;
+    let x = 24;
+    // typed letters: hot amber with a glow
+    c.shadowColor = 'rgba(255,170,60,1)';
+    c.shadowBlur = 14;
+    c.fillStyle = '#ffd890';
+    c.fillText(done, x, ty);
     x += c.measureText(done).width;
     c.shadowBlur = 0;
-    c.fillStyle = targeted ? '#ffffff' : '#c9d4c9';
-    c.fillText(todo, x, 44);
+    // remaining letters: outlined off-white
+    c.lineWidth = 6;
+    c.strokeStyle = 'rgba(0,0,0,0.85)';
+    c.strokeText(todo, x, ty);
+    c.fillStyle = targeted ? '#ffffff' : '#dfe4ea';
+    c.fillText(todo, x, ty);
     this.tex.needsUpdate = true;
   }
 

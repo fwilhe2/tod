@@ -22,6 +22,33 @@ const SHELL_GEO = new THREE.CylinderGeometry(0.008, 0.008, 0.032, 10).rotateX(Ma
 const RING_GEO = new THREE.RingGeometry(0.3, 0.38, 28);
 const BULLET_SPEED = 75;
 
+// lock-on reticle: four corner brackets that spin slowly around the target's
+// head and snap tight on every hit
+function makeReticle() {
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const c = cv.getContext('2d');
+  c.strokeStyle = '#fff';
+  c.lineWidth = 7;
+  c.lineCap = 'round';
+  const m = 14, l = 30;
+  for (const [x, y, dx, dy] of [[m, m, 1, 1], [S - m, m, -1, 1], [m, S - m, 1, -1], [S - m, S - m, -1, -1]]) {
+    c.beginPath();
+    c.moveTo(x, y + dy * l); c.lineTo(x, y); c.lineTo(x + dx * l, y);
+    c.stroke();
+  }
+  c.fillStyle = '#fff';
+  c.beginPath(); c.arc(S / 2, S / 2, 4, 0, Math.PI * 2); c.fill();
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(cv), color: new THREE.Color(0xffb84a).multiplyScalar(1.4),
+    transparent: true, depthTest: false, blending: THREE.AdditiveBlending, opacity: 0.85,
+  }));
+  sprite.renderOrder = 9;
+  sprite.visible = false;
+  return sprite;
+}
+
 export class Game {
   constructor(scene, camera, sfx, gun) {
     this.scene = scene;
@@ -48,6 +75,9 @@ export class Game {
     this.target = null;
     this.effects = [];   // tracers, limbs, shells, rings, popups {obj, life, ttl, vel?}
     this.fx = new Fx(scene); // instanced blood, gibs, decals, sparks, smoke
+    this.reticle = makeReticle();
+    this.reticlePulse = 0;
+    scene.add(this.reticle);
     this.baseZ = 0;      // camera rail position
     this.advanceFrom = 0;
     this.shakeT = 0;
@@ -491,6 +521,7 @@ export class Game {
     if (z) {
       this.spawnBullet(z);
       z.hit?.();
+      this.reticlePulse = 1;
       // every landed letter strips a part off a regular ghoul
       if (!z.isBoss) {
         const part = z.shed();
@@ -928,11 +959,25 @@ export class Game {
     this.gun.aimAt(this.aimLocal(cam));
     this.gun.update(dt, this.time);
 
+    // reticle rides the locked target's head
+    const tz = this.state === 'boss' ? this.boss : this.target;
+    if (tz && !tz.dead && tz.state !== 'dying' && tz.head.parent) {
+      const head = tz.headWorldPos(new THREE.Vector3());
+      const d = head.distanceTo(cam.position);
+      this.reticlePulse *= Math.exp(-dt * 10);
+      this.reticle.visible = true;
+      this.reticle.position.copy(head);
+      this.reticle.scale.setScalar((tz.isBoss ? 2.4 : 0.85) * (1 - this.reticlePulse * 0.3) * Math.max(1, d / 14));
+      this.reticle.material.rotation = this.time * 0.9;
+    } else {
+      this.reticle.visible = false;
+    }
+
     // keep word labels legible at distance
     for (const z of this.zombies) {
       const d = z.group.position.distanceTo(cam.position);
       const k = Math.max(1, d / 11);
-      z.label.scale.set(z.baseLabelW * k, (84 / 90) * k, 1);
+      z.label.scale.set(z.baseLabelW * k, (96 / 90) * k, 1);
     }
 
     this.updateTypebar();
