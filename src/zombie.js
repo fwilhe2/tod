@@ -12,6 +12,26 @@ const SKIN_MAPS = skinMaps();
 const CLOTH_MAPS = clothMaps();
 const SKIN_TEX = { map: tex(SKIN_MAPS.albedo, { srgb: true }), normalMap: tex(SKIN_MAPS.normal) };
 const CLOTH_TEX = { map: tex(CLOTH_MAPS.albedo, { srgb: true, repeat: [2, 2] }), normalMap: tex(CLOTH_MAPS.normal, { repeat: [2, 2] }) };
+const PINSTRIPE_TEX = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#17181f';
+  c.fillRect(0, 0, 128, 128);
+  c.fillStyle = 'rgba(140,140,160,0.5)';
+  for (let x = 0; x < 128; x += 11) c.fillRect(x, 0, 1, 128);
+  c.drawImage(CLOTH_MAPS.albedo, 0, 0, 128, 128);
+  c.globalCompositeOperation = 'multiply';
+  c.drawImage(CLOTH_MAPS.albedo, 0, 0, 128, 128);
+  c.globalCompositeOperation = 'source-over';
+  c.globalAlpha = 0.85;
+  c.fillStyle = '#17181f';
+  c.fillRect(0, 0, 128, 128);
+  c.globalAlpha = 1;
+  c.fillStyle = 'rgba(150,150,170,0.55)';
+  for (let x = 0; x < 128; x += 11) c.fillRect(x, 0, 1, 128);
+  return { map: tex(cv, { srgb: true, repeat: [3, 2] }), normalMap: CLOTH_TEX.normalMap };
+})();
 const HAIR = [0x1a1612, 0x2a2018, 0x2e2a26, 0x3a332c, 0x14100c];
 const TIES = [0x5a1018, 0x1c2a4a, 0x2c3a24, 0x4a3a10];
 
@@ -100,6 +120,8 @@ const LABEL_FONT = 'bold 56px "Courier New", ui-monospace, monospace';
 let labelSlot = 0;
 
 export class Zombie {
+  static env = null; // reflection map for the Chancellor's gold, set by main
+
   constructor(word, x, z, speed, scale = 1, tint = null, special = null) {
     this.word = word;
     this.special = special; // 'coffee': amber-eyed barista ghoul, heals on kill
@@ -135,15 +157,17 @@ export class Zombie {
     this.girth = this.build === 'bloated' ? 1.22 : this.build === 'gaunt' ? 0.8 : 1;
 
     const skinColor = tint ?? pick(SKIN);
-    const rimC = this.isBoss ? 0xff5040 : special === 'coffee' ? 0xffb040 : 0x9aa8b8;
-    const rimK = this.isBoss ? 0.6 : 0.22;
+    const rimC = this.isBoss ? 0xc01818 : special === 'coffee' ? 0xffb040 : 0x9aa8b8;
+    const rimK = this.isBoss ? 0.32 : 0.22;
     // a faint sickly self-glow keeps faces readable in the murk
     this.skinMat = this.mat(rimmed(new THREE.MeshStandardMaterial({
       ...SKIN_TEX, color: skinColor, roughness: 0.55, metalness: 0,
       emissive: new THREE.Color(skinColor).multiplyScalar(0.16), emissiveMap: SKIN_TEX.map,
     }), rimK, rimC));
+    // the Chancellor wears a pinstriped tailcoat; everyone else, rags
     this.clothMat = this.mat(rimmed(new THREE.MeshStandardMaterial({
-      ...CLOTH_TEX, color: pick(CLOTH), roughness: 0.95, metalness: 0, side: THREE.DoubleSide,
+      ...(this.isBoss ? PINSTRIPE_TEX : CLOTH_TEX), color: this.isBoss ? 0xffffff : pick(CLOTH),
+      roughness: this.isBoss ? 0.7 : 0.95, metalness: 0, side: THREE.DoubleSide,
     }), rimK * 0.7, rimC));
     this.woundMat = this.mat(rimmed(new THREE.MeshStandardMaterial({
       color: 0x4a0808, emissive: 0x1a0202, roughness: 0.22, metalness: 0,
@@ -381,7 +405,7 @@ export class Zombie {
       head.add(eye);
       const glow = new THREE.Sprite(this.glowMat);
       glow.position.set(0.105 * s, 0.01, 0.27);
-      glow.scale.setScalar(this.isBoss ? 0.5 : 0.2);
+      glow.scale.setScalar(this.isBoss ? 0.28 : 0.2);
       head.add(glow);
     }
   }
@@ -496,20 +520,84 @@ export class Zombie {
 
   buildHat() {
     // The Chancellor dresses for the occasion
-    const hatMat = this.mat(new THREE.MeshLambertMaterial({ color: 0x14121a }));
-    const bandMat = this.mat(new THREE.MeshBasicMaterial({ color: 0xffc040 }));
+    const env = Zombie.env;
+    const rimC = 0xc01818;
+    const hatMat = this.mat(rimmed(new THREE.MeshStandardMaterial({ color: 0x101016, roughness: 0.35, envMap: env }), 0.2, rimC));
+    const gold = this.mat(rimmed(new THREE.MeshStandardMaterial({
+      color: 0xd8a848, metalness: 1, roughness: 0.28, envMap: env, emissive: 0x1a1004,
+    }), 0.1, rimC));
+    this.goldMat = gold;
     const hat = new THREE.Group();
-    const crown = this.mesh(new THREE.CylinderGeometry(0.21, 0.23, 0.36, 12), hatMat);
+    const crown = this.mesh(new THREE.CylinderGeometry(0.21, 0.23, 0.36, 20), hatMat);
     crown.position.set(0, 0.42, -0.02);
     hat.add(crown);
-    const brim = this.mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.03, 14), hatMat);
+    const brim = this.mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.03, 24), hatMat);
     brim.position.set(0, 0.25, -0.02);
     hat.add(brim);
-    const band = this.mesh(new THREE.CylinderGeometry(0.225, 0.235, 0.07, 12), bandMat);
+    const band = this.mesh(new THREE.CylinderGeometry(0.225, 0.235, 0.07, 20), gold);
     band.position.set(0, 0.3, -0.02);
     hat.add(band);
     this.head.add(hat);
     this.hat = hat;
+
+    // monocle over the left eye, its lens catching the light
+    const monocle = this.mesh(new THREE.TorusGeometry(0.075, 0.009, 6, 20), gold);
+    monocle.position.set(-0.105, 0.01, 0.255);
+    this.head.add(monocle);
+    const lens = this.mesh(new THREE.CircleGeometry(0.07, 20), this.mat(rimmed(new THREE.MeshStandardMaterial({
+      color: 0x99aacc, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.35, envMap: env,
+    }), 0.6, 0xffffff)));
+    lens.position.set(-0.105, 0.01, 0.257);
+    this.head.add(lens);
+    const chain = this.mesh(new THREE.TorusGeometry(0.16, 0.004, 4, 16, Math.PI * 0.6), gold);
+    chain.position.set(-0.13, -0.12, 0.2);
+    chain.rotation.set(0.2, 0.5, 1.6);
+    this.head.add(chain);
+
+    // white shirt-front and crimson cravat
+    const shirt = this.mesh(new THREE.BoxGeometry(0.26, 0.42, 0.04), this.mat(rimmed(new THREE.MeshStandardMaterial({ color: 0xb8b4a8, roughness: 0.6 }), 0.2, rimC)));
+    shirt.position.set(0, 0.8, 0.29);
+    shirt.rotation.x = 0.12;
+    this.body.add(shirt);
+    const cravat = this.mesh(new THREE.ConeGeometry(0.08, 0.22, 4), this.mat(rimmed(new THREE.MeshStandardMaterial({ color: 0x7a0a10, roughness: 0.4 }), 0.2, rimC)));
+    cravat.position.set(0, 0.96, 0.32);
+    cravat.rotation.x = Math.PI + 0.15;
+    this.body.add(cravat);
+    // gold watch chain swagged across the waistcoat
+    const fob = this.mesh(new THREE.TorusGeometry(0.2, 0.011, 6, 24, Math.PI), gold);
+    fob.position.set(0, 0.5, 0.27);
+    fob.rotation.z = Math.PI;
+    this.body.add(fob);
+    // tailcoat tails hanging behind
+    for (const sx of [-1, 1]) {
+      const tail = this.mesh(new THREE.PlaneGeometry(0.24, 0.75, 1, 4), this.clothMat);
+      const pivot = new THREE.Group();
+      pivot.position.set(sx * 0.14, 0.15, -0.22);
+      tail.position.y = -0.37;
+      pivot.add(tail);
+      pivot.userData.phase = sx;
+      this.body.add(pivot);
+      this.rags.push(pivot);
+    }
+
+    // a halo of gold coins orbiting him: the debts he's owed
+    this.coins = [];
+    const coinGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.012, 16);
+    for (let i = 0; i < 20; i++) {
+      const coin = this.mesh(coinGeo, gold);
+      coin.userData = { a: (i / 20) * Math.PI * 2, r: rand(0.9, 1.25), y: rand(0.4, 1.9), sp: rand(0.35, 0.6), wob: rand(0, 6) };
+      this.group.add(coin);
+      this.coins.push(coin);
+    }
+    // crimson pool of light at his feet
+    const aura = new THREE.Mesh(SHADOW_GEO, this.mat(new THREE.MeshBasicMaterial({
+      map: GLOW_TEX, color: 0xb01010, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.6,
+    })));
+    aura.rotation.x = -Math.PI / 2;
+    aura.position.y = 0.03;
+    aura.scale.setScalar(1.6);
+    this.group.add(aura);
+    this.aura = aura;
   }
 
   buildCup() {
@@ -688,6 +776,24 @@ export class Zombie {
     }
 
     const ok = (p) => !p.userData.shed; // don't animate parts that were shot off
+
+    if (this.coins) {
+      const falling = this.state === 'dying';
+      for (const c of this.coins) {
+        const u = c.userData;
+        if (falling) { // the debts scatter and drop
+          u.vy = (u.vy ?? rand(0.5, 2)) - 9 * dt / this.scale;
+          c.position.y = Math.max(0.01, c.position.y + u.vy * dt);
+          c.position.x *= 1 + dt * 1.5;
+          c.position.z *= 1 + dt * 1.5;
+          continue;
+        }
+        u.a += u.sp * dt;
+        c.position.set(Math.cos(u.a) * u.r, u.y + Math.sin(this.t * 1.3 + u.wob) * 0.12, Math.sin(u.a) * u.r);
+        c.rotation.set(Math.PI / 2, 0, u.a + this.t * 2);
+      }
+      this.aura.material.opacity = falling ? Math.max(0, this.aura.material.opacity - dt) : 0.45 + Math.sin(this.t * 2.2) * 0.15;
+    }
 
     if (this.hitFlash > 0) {
       this.hitFlash = Math.max(0, this.hitFlash - dt * 6);

@@ -967,7 +967,7 @@ export class Game {
       this.reticlePulse *= Math.exp(-dt * 10);
       this.reticle.visible = true;
       this.reticle.position.copy(head);
-      this.reticle.scale.setScalar((tz.isBoss ? 2.4 : 0.85) * (1 - this.reticlePulse * 0.3) * Math.max(1, d / 14));
+      this.reticle.scale.setScalar((tz.isBoss ? 1.5 : 0.85) * (1 - this.reticlePulse * 0.3) * Math.max(1, d / 14));
       this.reticle.material.rotation = this.time * 0.9;
     } else {
       this.reticle.visible = false;
