@@ -24,13 +24,9 @@
 
     /* ---------- overlays ---------- */
     .fx { position: absolute; inset: 0; pointer-events: none; }
-    #vignette {
-      background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
-      z-index: 5;
-    }
     #scanlines {
       background: repeating-linear-gradient(0deg, rgba(0,0,0,0.13) 0px, rgba(0,0,0,0.13) 1px, transparent 2px, transparent 4px);
-      z-index: 6; opacity: 0.5;
+      z-index: 6; opacity: 0.3;
     }
     #redflash {
       background: radial-gradient(ellipse at center, rgba(255,30,30,0.45) 0%, rgba(160,0,0,0.7) 100%);
@@ -128,7 +124,6 @@
 <body>
   <div id="app"></div>
 
-  <div id="vignette" class="fx"></div>
   <div id="redflash" class="fx"></div>
   <div id="scanlines" class="fx"></div>
   <div id="demobadge">DEMO &mdash; PRESS ANY KEY</div>

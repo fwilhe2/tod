@@ -1,16 +1,13 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildWorld } from './world.js';
 import { Game } from './game.js';
 import { Gun } from './gun.js';
 import { Sfx } from './audio.js';
+import { createPost } from './post.js';
 
 const app = document.getElementById('app');
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -29,21 +26,16 @@ const game = new Game(scene, camera, sfx, gun);
 game.world = world;
 if (new URLSearchParams(location.search).has('debug')) window.game = game;
 
-// glow pipeline: muzzle flashes, tracers, eyes, lamps, lightning all bloom
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.75, 0.5, 0.6
-);
-composer.addPass(bloom);
-composer.addPass(new OutputPass());
+// glow pipeline: muzzle flashes, tracers, eyes, lamps, lightning all bloom,
+// then a film-stock grade pass on top
+const post = createPost(renderer, scene, camera);
+game.post = post;
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setSize(window.innerWidth, window.innerHeight);
-  bloom.resolution.set(window.innerWidth, window.innerHeight);
+  post.resize(window.innerWidth, window.innerHeight);
 });
 
 const timer = new THREE.Timer();
@@ -54,5 +46,5 @@ renderer.setAnimationLoop((time) => {
     const dt = game.advance(rawDt); // bullet-time may dilate the frame
     world.update(dt, camera.position);
   }
-  composer.render();
+  post.render(rawDt, timer.getElapsed());
 });

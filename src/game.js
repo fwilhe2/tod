@@ -31,6 +31,7 @@ export class Game {
     this.sfx = sfx;
     this.gun = gun;
     this.world = null;   // set by main.js, drives district moods
+    this.post = null;    // set by main.js, screen-space hurt/kill pulses
     this.fovKick = 0;
     this.groanT = 3;
     this.beatT = 0;
@@ -508,6 +509,7 @@ export class Game {
     this.spawnRing(head);
     this.spawnPopup(`+${pts}`, head);
     this.fovKick = Math.min(this.fovKick + 2.5, 8);
+    if (this.post) this.post.punch = 1;
     // the last letter takes the head clean off
     const skull = z.decapitate();
     if (skull) this.flingPart(skull, 1.5);
@@ -541,6 +543,7 @@ export class Game {
     this.spawnPopup('+400', head);
     this.fovKick = Math.min(this.fovKick + 4.5, 9);
     this.shakeT = Math.max(this.shakeT, 0.3);
+    if (this.post) this.post.punch = 1.5;
     this.score += 400;
     if (this.bossHP <= 0) {
       this.slowmo = 1.2;
@@ -555,6 +558,7 @@ export class Game {
     this.hp--;
     this.shakeT = 0.45;
     this.sfx.hurt();
+    if (this.post) this.post.hurt = 1;
     this.hud.redflash.classList.add('on');
     setTimeout(() => this.hud.redflash.classList.remove('on'), 180);
     this.updateHUD();
@@ -980,6 +984,7 @@ export class Game {
 
   // ---------------- HUD ----------------
   updateHUD() {
+    if (this.post) this.post.lowHP = this.hp <= 1 ? 1 : this.hp === 2 ? 0.45 : 0;
     this.hud.hearts.textContent = '♥'.repeat(this.hp) + '♡'.repeat(Math.max(0, MAX_HP - this.hp));
     this.hud.score.textContent = this.score.toLocaleString();
     this.hud.combo.textContent = this.combo >= 5 ? `${this.combo} COMBO x${1 + Math.floor(this.combo / 10)}` : '';
