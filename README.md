@@ -54,16 +54,37 @@ Requires Node 18+.
 
 ## Tech notes
 
-- **Rendering:** Three.js with an HDR bloom post-processing pipeline (ACES
-  tone mapping + UnrealBloomPass) — fog-drenched night canal with rain,
-  lightning, drifting ground mist and embers; procedural multi-jointed
-  ghouls (elbows, knees, swinging jaws, clawed fingers, glowing eyes,
-  wounds, fluttering rags) with shamble/lunge/death animations; a
-  first-person sidearm in a gloved hand with recoil, muzzle flash and
-  ejected shell casings; visible tracer rounds, impact sparks, shockwave
-  rings and score popups per keystroke; canvas-texture word labels as
-  billboards, vertex-animated canal water, window-lit facades from
-  generated textures.
+- **Rendering:** Three.js PBR into a half-float HDR target, then bloom,
+  ACES tone mapping, FXAA and a film-stock grade pass (lens distortion,
+  edge chromatic aberration, teal/amber split tone, grain, vignette,
+  red damage pulses and blood running down the lens). Every texture is
+  painted into canvases at startup: granite setts with normal maps and a
+  puddle map, six styles of canal-house facade (plaster, exposed brick,
+  shutters, Venetian arches, lit interiors in an emissive map), dead skin,
+  grave clothes, splatter decals.
+- **The city:** a planar mirror pass reflects lamps, windows, lightning
+  and the horde in the puddles and the canal, with raindrop ripples and
+  wave distortion. A procedural sky dome draws fbm storm clouds drifting
+  over a cratered moon, and forked lightning bolts throw shadows from
+  the shadow-casting moon and strike lights. Terraces of canal houses
+  with cornices, balconies and funnel chimneys line both banks, joined
+  by humped stone bridges, striped mooring poles and rocking gondolas.
+  Cast-iron lamps hang volumetric light cones in the rain, and a pool of
+  real point lights follows the nearest ones. Each district crossfades
+  its own fog, mist, rain, cloud cover and moon.
+- **The horde:** multi-jointed ghouls (bloated, gaunt or ordinary) with
+  patchy scalps, torn-away skull, gap-toothed jaws, ribs and office ties,
+  a moonlit rim light and a hit flare on every letter. Killed ghouls burn
+  away from a noise front in glowing embers. Instanced blood droplets,
+  bouncing gibs, drying splatter decals, spark streaks, red mist and
+  muzzle smoke. The Chancellor wears a pinstriped tailcoat and monocle,
+  with a halo of gold coins in orbit.
+- **The sidearm:** a bevelled pistol with green tritium night sights and
+  a glowing amber battery cell, reflecting a small generated environment
+  map, plus a lock-on reticle around the current target.
+- **Frame rate:** instanced lamps and particles, merged zombie parts, and
+  an automatic resolution step-down if frames run long (`?fixedq`
+  disables it; `?debug` exposes the renderer for profiling).
 - **Gameplay flourishes:** typed dismemberment (each letter strips a part,
   the last pops the head; the boss loses his hat, arms, and jaw one phrase
   at a time), ghouls that climb dripping out of the canal, five per-district
