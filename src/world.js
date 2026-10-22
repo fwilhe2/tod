@@ -21,9 +21,28 @@ function glowTexture(inner, mid) {
   return new THREE.CanvasTexture(cv);
 }
 
+// Raindrop rings in standing water: two jittered cell layers, each cell
+// fires an expanding ring on its own clock. Returns a slope in xz.
+const RIPPLE_GLSL = /* glsl */`
+  vec2 rainRipples(vec2 p, float t) {
+    vec2 acc = vec2(0.0);
+    for (int k = 0; k < 2; k++) {
+      vec2 q = p * 2.2 + float(k) * vec2(0.37, 0.61);
+      vec2 cell = floor(q);
+      float h = fract(sin(dot(cell, vec2(12.9898, 78.233)) + float(k) * 3.1) * 43758.5453);
+      vec2 d = fract(q) - 0.5 - (vec2(h, fract(h * 13.7)) - 0.5) * 0.5;
+      float ph = fract(t * (0.8 + h * 0.6) + h);
+      float r = length(d), front = ph * 0.45;
+      float ring = sin((r - front) * 70.0) * smoothstep(0.06, 0.0, abs(r - front)) * (1.0 - ph);
+      acc += d / max(r, 1e-3) * ring;
+    }
+    return acc;
+  }
+`;
+
 // Patch a standard material so it can sample the ground mirror; `frag`
 // edits the fragment shader, `extra` adds uniforms.
-function wetSurface(mat, mirror, frag, extra = {}) {
+function wetSurface(mat, mirror, frag, extra = {}, glsl = '') {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.tReflect = { value: mirror.texture };
     shader.uniforms.reflMatrix = { value: mirror.matrix };
@@ -34,7 +53,7 @@ function wetSurface(mat, mirror, frag, extra = {}) {
     );
     shader.fragmentShader = 'varying vec3 vWPos;\n'
       + Object.keys(extra).map((k) => `uniform float ${k};\n`).join('')
-      + REFLECT_GLSL + frag(shader.fragmentShader);
+      + REFLECT_GLSL + glsl + frag(shader.fragmentShader);
   };
 }
 
@@ -87,6 +106,8 @@ export function buildWorld(scene, sfx, renderer) {
   const mirror = createMirror(renderer);
   const cobble = cobbleMaps();
   const puddles = tex(puddleMap(), { repeat: [2, 25] });
+  const waterTime = { value: 0 };
+  const rainAmt = { value: 1 };
   const streetMat = new THREE.MeshStandardMaterial({
     map: tex(cobble.albedo, { srgb: true, repeat: [12, 250] }),
     normalMap: tex(cobble.normal, { repeat: [12, 250] }),
@@ -103,18 +124,20 @@ export function buildWorld(scene, sfx, renderer) {
   ).replace(
     '#include <normal_fragment_maps>',
     `#include <normal_fragment_maps>
-     normal = normalize(mix(normal, normalize(vNormal), wet * 0.92)); // puddles are flat`
+     normal = normalize(mix(normal, normalize(vNormal), wet * 0.92)); // puddles are flat
+     vec2 rip = rainRipples(vWPos.xz, waterTime) * rainAmt;
+     normal = normalize(normal + (viewMatrix * vec4(rip.x, 0.0, rip.y, 0.0)).xyz * wet * 0.5);`
   ).replace(
     '#include <emissivemap_fragment>',
     `#include <emissivemap_fragment>
      {
        vec3 V = normalize(cameraPosition - vWPos);
        float F = 0.04 + 0.96 * pow(1.0 - clamp(V.y, 0.0, 1.0), 5.0);
-       vec2 bump = mapN.xy;
-       vec3 refl = sampleReflection(vWPos, bump * mix(0.03, 0.003, wet), mix(0.01, 0.0012, wet));
+       vec2 bump = mapN.xy * (1.0 - wet) + rip * wet * 0.5;
+       vec3 refl = sampleReflection(vWPos, bump * mix(0.03, 0.006, wet), mix(0.01, 0.0012, wet));
        totalEmissiveRadiance += refl * mix(0.1, 0.9, wet) * mix(0.3, 1.0, F);
      }`
-  ));
+  ), { waterTime, rainAmt }, RIPPLE_GLSL);
   const street = new THREE.Mesh(new THREE.PlaneGeometry(24, 500), streetMat);
   street.rotation.x = -Math.PI / 2;
   street.position.set(0, 0, -200);
@@ -124,7 +147,6 @@ export function buildWorld(scene, sfx, renderer) {
   // canal (right side): black water mirroring the far bank, rippled by waves
   const waterGeo = new THREE.PlaneGeometry(14, 500, 12, 160);
   const waterMat = new THREE.MeshStandardMaterial({ color: 0x03070d, roughness: 0.12, metalness: 0 });
-  const waterTime = { value: 0 };
   wetSurface(waterMat, mirror, (s) => s.replace(
     '#include <emissivemap_fragment>',
     `#include <emissivemap_fragment>
@@ -229,6 +251,31 @@ export function buildWorld(scene, sfx, renderer) {
   rain.layers.set(NO_REFLECT_LAYER);
   scene.add(rain);
 
+  // splash droplets kicked up where rain hits the street
+  const SPL_N = 360;
+  const splArr = new Float32Array(SPL_N * 3), splCol = new Float32Array(SPL_N * 3);
+  const splash = Array.from({ length: SPL_N }, () => ({ life: 1, ttl: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 }));
+  let splNext = 0;
+  const splGeo = new THREE.BufferGeometry();
+  splGeo.setAttribute('position', new THREE.BufferAttribute(splArr, 3));
+  splGeo.setAttribute('color', new THREE.BufferAttribute(splCol, 3));
+  const splPts = new THREE.Points(splGeo, new THREE.PointsMaterial({
+    size: 0.07, map: glowTexture('rgba(255,255,255,1)', 'rgba(255,255,255,0.5)'),
+    vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  splPts.frustumCulled = false;
+  splPts.layers.set(NO_REFLECT_LAYER);
+  scene.add(splPts);
+  const kickSplash = (x, z) => {
+    for (let k = 0; k < 3; k++) {
+      const sp = splash[splNext];
+      splNext = (splNext + 1) % SPL_N;
+      sp.x = x; sp.y = 0.02; sp.z = z;
+      sp.vx = rand(-0.6, 0.6); sp.vy = rand(0.9, 1.7); sp.vz = rand(-0.6, 0.6);
+      sp.life = 0; sp.ttl = rand(0.14, 0.24);
+    }
+  };
+
   // ---- ground mist drifting over the cobbles ----
   const mistTex = glowTexture('rgba(150,170,210,0.16)', 'rgba(120,140,190,0.07)');
   const mists = [];
@@ -253,7 +300,8 @@ export function buildWorld(scene, sfx, renderer) {
   }
   emberGeo.setAttribute('position', new THREE.BufferAttribute(emberArr, 3));
   const emberPts = new THREE.Points(emberGeo, new THREE.PointsMaterial({
-    color: 0xffc070, size: 0.09, transparent: true, opacity: 0.8,
+    color: 0xffc070, size: 0.12, transparent: true, opacity: 0.8,
+    map: glowTexture('rgba(255,255,255,1)', 'rgba(255,255,255,0.35)'),
     blending: THREE.AdditiveBlending, depthWrite: false,
   }));
   emberPts.frustumCulled = false;
@@ -314,6 +362,8 @@ export function buildWorld(scene, sfx, renderer) {
         const d = drops[i];
         d.y -= d.v * dt;
         if (d.y < 0) {
+          // only splash on the street, close enough to see
+          if (Math.abs(d.x) < 12 && d.z > -30 && d.z < 2) kickSplash(camPos.x + d.x, camPos.z + d.z);
           d.y = rand(18, 26);
           d.x = rand(-30, 30);
           d.z = rand(-45, 10);
@@ -324,6 +374,19 @@ export function buildWorld(scene, sfx, renderer) {
         rainArr[j + 3] = wx; rainArr[j + 4] = wy + 0.5; rainArr[j + 5] = wz;
       }
       rainGeo.attributes.position.needsUpdate = true;
+      for (let i = 0; i < SPL_N; i++) {
+        const sp = splash[i], j = i * 3;
+        sp.life += dt;
+        if (sp.life >= sp.ttl) { splCol[j] = splCol[j + 1] = splCol[j + 2] = 0; continue; }
+        sp.vy -= 12 * dt;
+        sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.z += sp.vz * dt;
+        splArr[j] = sp.x; splArr[j + 1] = sp.y; splArr[j + 2] = sp.z;
+        const k = (1 - sp.life / sp.ttl) * cur.rain * 1.6;
+        splCol[j] = 0.6 * k; splCol[j + 1] = 0.68 * k; splCol[j + 2] = 0.85 * k;
+      }
+      splGeo.attributes.position.needsUpdate = true;
+      splGeo.attributes.color.needsUpdate = true;
+      rainAmt.value = cur.rain / 0.32;
 
       // mist drifts sideways and slowly rotates; recycled along the rail
       for (const { m, drift, spin } of mists) {
