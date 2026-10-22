@@ -1,30 +1,11 @@
 import * as THREE from 'three';
 import { createSky } from './sky.js';
+import { buildCity } from './city.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cobbleMaps, puddleMap, tex } from './textures.js';
 import { createMirror, REFLECT_GLSL, NO_REFLECT_LAYER } from './reflect.js';
 
 function rand(a, b) { return a + Math.random() * (b - a); }
-
-// canvas texture: dark facade with scattered lit windows
-function facadeTexture() {
-  const cv = document.createElement('canvas');
-  cv.width = 64; cv.height = 128;
-  const c = cv.getContext('2d');
-  c.fillStyle = '#11141f';
-  c.fillRect(0, 0, 64, 128);
-  for (let y = 8; y < 120; y += 14) {
-    for (let x = 6; x < 58; x += 12) {
-      const r = Math.random();
-      if (r < 0.14) c.fillStyle = '#ffc866';
-      else if (r < 0.2) c.fillStyle = '#6a4a2a';
-      else c.fillStyle = '#05070d';
-      c.fillRect(x, y, 7, 9);
-    }
-  }
-  const tex = new THREE.CanvasTexture(cv);
-  tex.magFilter = THREE.NearestFilter;
-  return tex;
-}
 
 // soft radial blob, used for mist, lamp glow, moon halo
 function glowTexture(inner, mid) {
@@ -84,7 +65,7 @@ export function buildWorld(scene, sfx, renderer) {
   const moonlight = new THREE.DirectionalLight(0x9fb4ff, 1.0);
   moonlight.position.set(-30, 60, -40);
   scene.add(moonlight);
-  const lamp = new THREE.PointLight(0xffb45e, 120, 60, 1.8); // follows camera
+  const lamp = new THREE.PointLight(0xffb45e, 80, 60, 1.8); // follows camera
   scene.add(lamp);
   // lightning strobe
   const bolt = new THREE.DirectionalLight(0xcdd8ff, 0);
@@ -159,45 +140,54 @@ export function buildWorld(scene, sfx, renderer) {
   quay.position.set(12.6, 0.2, -200);
   scene.add(quay);
 
-  // buildings
-  const facades = [facadeTexture(), facadeTexture(), facadeTexture()];
-  const addBuilding = (x, z) => {
-    const w = rand(7, 12), h = rand(9, 22), d = rand(6, 10);
-    const tex = facades[Math.floor(Math.random() * facades.length)];
-    const mat = new THREE.MeshLambertMaterial({
-      color: 0x8890a8,
-      map: tex,
-      emissive: 0xffc27a,
-      emissiveMap: tex,
-      emissiveIntensity: 0.55,
-    });
-    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    b.position.set(x, h / 2, z);
-    scene.add(b);
-  };
-  for (let z = 15; z > -420; z -= rand(9, 14)) addBuilding(rand(-19, -16), z);      // left row
-  for (let z = 15; z > -420; z -= rand(9, 14)) addBuilding(rand(29, 33), z);        // across the canal
+  // canal houses on both banks
+  const city = buildCity(scene);
 
-  // lampposts along the quay, with flickering halos
-  const postMat = new THREE.MeshLambertMaterial({ color: 0x1a1e2a });
-  const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
+  // cast-iron lampposts along the quay and lanterns bracketed to the
+  // houses opposite, all with flickering halos
+  const ironMat = new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.5, metalness: 0.7 });
+  const bulbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffd9a0).multiplyScalar(2.2) });
   const lampGlowTex = glowTexture('rgba(255,205,130,0.9)', 'rgba(255,160,60,0.25)');
   const lampGlows = [];
-  for (let z = 0; z > -400; z -= 22) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 3.6, 6), postMat);
-    post.position.set(11.5, 1.8, z);
-    scene.add(post);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), bulbMat);
-    bulb.position.set(11.5, 3.7, z);
-    scene.add(bulb);
+  const ironGeos = [], bulbGeos = [];
+  const put = (list, g, x, y, z) => { g.translate(x, y, z); list.push(g); };
+  const addLight = (pos, size) => {
     const halo = new THREE.Sprite(new THREE.SpriteMaterial({
       map: lampGlowTex, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, opacity: 0.5,
     }));
-    halo.position.copy(bulb.position);
-    halo.scale.setScalar(2.6);
+    halo.position.copy(pos);
+    halo.scale.setScalar(size);
     scene.add(halo);
-    lampGlows.push({ halo, phase: rand(0, 20), rnd: Math.random() });
+    lampGlows.push({ halo, pos, phase: rand(0, 20), rnd: Math.random(), k: 1 });
+  };
+  for (let z = 0; z > -440; z -= 22) {
+    const x = 11.5;
+    put(ironGeos, new THREE.CylinderGeometry(0.22, 0.3, 0.5, 8), x, 0.25, z);  // plinth
+    put(ironGeos, new THREE.CylinderGeometry(0.06, 0.1, 3.5, 8), x, 2.1, z);   // fluted pole
+    put(ironGeos, new THREE.TorusGeometry(0.12, 0.025, 6, 12), x, 3.2, z);    // collar
+    put(ironGeos, new THREE.CylinderGeometry(0.05, 0.2, 0.25, 4), x, 3.95, z); // lantern cage
+    put(ironGeos, new THREE.ConeGeometry(0.3, 0.32, 4), x, 4.42, z);          // hood
+    put(bulbGeos, new THREE.CylinderGeometry(0.17, 0.12, 0.38, 4), x, 4.07, z);
+    addLight(new THREE.Vector3(x, 4.05, z), 2.8);
+  }
+  for (const p of city.lanterns) {
+    const s = Math.sign(p.x) || 1; // bracket juts out from the wall
+    put(ironGeos, new THREE.BoxGeometry(0.6, 0.05, 0.05), p.x - s * 0.15, p.y + 0.42, p.z);
+    put(ironGeos, new THREE.ConeGeometry(0.2, 0.22, 4), p.x + s * 0.12, p.y + 0.3, p.z);
+    put(bulbGeos, new THREE.CylinderGeometry(0.12, 0.09, 0.3, 4), p.x + s * 0.12, p.y, p.z);
+    addLight(new THREE.Vector3(p.x + s * 0.12, p.y, p.z), 2.2);
+  }
+  scene.add(new THREE.Mesh(mergeGeometries(ironGeos.map((g) => g.toNonIndexed())), ironMat));
+  scene.add(new THREE.Mesh(mergeGeometries(bulbGeos.map((g) => g.toNonIndexed())), bulbMat));
+
+  // a small pool of real point lights hops between the lamps nearest the
+  // camera, so lamplight actually pools on the cobbles and facades
+  const lightPool = [];
+  for (let i = 0; i < 4; i++) {
+    const l = new THREE.PointLight(0xffa955, 0, 15, 1.7);
+    scene.add(l);
+    lightPool.push(l);
   }
 
   // sky dome: gradient, stars, cratered moon, drifting storm clouds
@@ -345,6 +335,17 @@ export function buildWorld(scene, sfx, renderer) {
         lg.halo.material.opacity = (lg.rnd < Math.max(0.25, cur.flickerAll))
           ? Math.max(0.05, 0.4 + n * 0.42)
           : 0.5 + n * 0.06;
+        lg.k = lg.halo.material.opacity / 0.5;
+      }
+      // hand the pooled lights to the nearest lamps ahead of the camera
+      const near = lampGlows
+        .filter((lg) => lg.pos.z < camPos.z + 4 && lg.pos.z > camPos.z - 60)
+        .sort((a, b) => a.pos.distanceToSquared(camPos) - b.pos.distanceToSquared(camPos));
+      for (let i = 0; i < lightPool.length; i++) {
+        const l = lightPool[i], lg = near[i];
+        if (!lg) { l.intensity = 0; continue; }
+        l.position.copy(lg.pos);
+        l.intensity = 34 * lg.k;
       }
 
       // lightning
