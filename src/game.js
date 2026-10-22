@@ -485,6 +485,7 @@ export class Game {
     this.spawnShell();
     if (z) {
       this.spawnBullet(z);
+      z.hit?.();
       // every landed letter strips a part off a regular ghoul
       if (!z.isBoss) {
         const part = z.shed();

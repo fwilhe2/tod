@@ -1,12 +1,48 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { skinMaps, clothMaps, radialCanvas, tex } from './textures.js';
 
 // pallid, desaturated corpse tones — no healthy saturation
 const SKIN = [0x87927a, 0x7d8a68, 0x8e9a84, 0x707d5e, 0x939c7d];
-const CLOTH = [0x49443e, 0x3d4348, 0x51453a, 0x41483f, 0x3b3d4e, 0x564a44];
+// faded, filthy clothes: work shirts, office blue, khaki, a once-white shirt
+const CLOTH = [0x6a6258, 0x55606a, 0x7a6a52, 0x5a6450, 0x4a5068, 0x806e5e, 0x8a8478, 0x5e4e44];
 
-const SHADOW_MAT = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4 });
-const BONE_MAT = new THREE.MeshLambertMaterial({ color: 0xc4bca8 });
-const SHADOW_GEO = new THREE.CircleGeometry(0.75, 20);
+// shared procedural surface maps (painted once)
+const SKIN_MAPS = skinMaps();
+const CLOTH_MAPS = clothMaps();
+const SKIN_TEX = { map: tex(SKIN_MAPS.albedo, { srgb: true }), normalMap: tex(SKIN_MAPS.normal) };
+const CLOTH_TEX = { map: tex(CLOTH_MAPS.albedo, { srgb: true, repeat: [2, 2] }), normalMap: tex(CLOTH_MAPS.normal, { repeat: [2, 2] }) };
+const HAIR = [0x1a1612, 0x2a2018, 0x3a3630, 0x55504a, 0x14100c];
+const TIES = [0x5a1018, 0x1c2a4a, 0x2c3a24, 0x4a3a10];
+
+// soft contact shadow under the feet
+const SHADOW_MAT = new THREE.MeshBasicMaterial({
+  map: new THREE.CanvasTexture(radialCanvas([[0, 'rgba(0,0,0,0.75)'], [0.5, 'rgba(0,0,0,0.4)'], [1, 'rgba(0,0,0,0)']])),
+  transparent: true, depthWrite: false,
+});
+const BONE_MAT = new THREE.MeshStandardMaterial({ color: 0xc4bca0, roughness: 0.45 });
+const SHADOW_GEO = new THREE.PlaneGeometry(1.9, 1.9);
+
+// Moonlit rim + hit flash, injected into each zombie surface so silhouettes
+// separate from the dark street and every landed letter flares the body.
+function rimmed(mat, rim, rimColor) {
+  mat.userData.hit = { value: 0 };
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.rimColor = { value: new THREE.Color(rimColor).multiplyScalar(rim) };
+    shader.uniforms.hitFlash = mat.userData.hit;
+    shader.fragmentShader = 'uniform vec3 rimColor;\nuniform float hitFlash;\n' + shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+       {
+         float ndv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+         float rim = pow(1.0 - ndv, 4.0);
+         totalEmissiveRadiance += rimColor * rim + vec3(1.0, 0.82, 0.7) * hitFlash * (0.25 + rim);
+       }`
+    );
+  };
+  mat.customProgramCacheKey = () => 'zombie-rim';
+  return mat;
+}
 
 // soft radial glow texture, shared by all eye glows
 const GLOW_TEX = (() => {
@@ -76,12 +112,28 @@ export class Zombie {
     this.geos = [];
     this.mats = [];
 
+    // body type: most are ordinary corpses, some bloated, some starved
+    this.build = this.isBoss ? 'normal' : pick(['normal', 'normal', 'bloated', 'gaunt']);
+    this.girth = this.build === 'bloated' ? 1.22 : this.build === 'gaunt' ? 0.8 : 1;
+
     const skinColor = tint ?? pick(SKIN);
-    this.skinMat = this.mat(new THREE.MeshLambertMaterial({ color: skinColor, emissive: 0x222c1e }));
-    this.clothMat = this.mat(new THREE.MeshLambertMaterial({ color: pick(CLOTH), emissive: 0x14141c, side: THREE.DoubleSide }));
-    this.woundMat = this.mat(new THREE.MeshLambertMaterial({ color: 0x521010, emissive: 0x260505 }));
+    const rimC = this.isBoss ? 0xff5040 : special === 'coffee' ? 0xffb040 : 0x9aa8b8;
+    const rimK = this.isBoss ? 0.6 : 0.22;
+    // a faint sickly self-glow keeps faces readable in the murk
+    this.skinMat = this.mat(rimmed(new THREE.MeshStandardMaterial({
+      ...SKIN_TEX, color: skinColor, roughness: 0.55, metalness: 0,
+      emissive: new THREE.Color(skinColor).multiplyScalar(0.16), emissiveMap: SKIN_TEX.map,
+    }), rimK, rimC));
+    this.clothMat = this.mat(rimmed(new THREE.MeshStandardMaterial({
+      ...CLOTH_TEX, color: pick(CLOTH), roughness: 0.95, metalness: 0, side: THREE.DoubleSide,
+    }), rimK * 0.7, rimC));
+    this.woundMat = this.mat(rimmed(new THREE.MeshStandardMaterial({
+      color: 0x4a0808, emissive: 0x1a0202, roughness: 0.22, metalness: 0,
+    }), rimK * 0.5, 0xff6060));
+    this.hitMats = [this.skinMat, this.clothMat, this.woundMat];
+    this.hitFlash = 0;
     const eyeColor = this.isBoss ? 0xff4030 : special === 'coffee' ? 0xffc040 : 0xc8d86a;
-    this.eyeMat = this.mat(new THREE.MeshBasicMaterial({ color: eyeColor }));
+    this.eyeMat = this.mat(new THREE.MeshBasicMaterial({ color: new THREE.Color(eyeColor).multiplyScalar(2.5) }));
     this.glowMat = this.mat(new THREE.SpriteMaterial({
       map: GLOW_TEX, color: eyeColor, transparent: true,
       blending: THREE.AdditiveBlending, depthWrite: false, opacity: this.isBoss ? 0.85 : 0.6,
@@ -109,6 +161,7 @@ export class Zombie {
     const shadow = new THREE.Mesh(SHADOW_GEO, SHADOW_MAT);
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.02;
+    shadow.renderOrder = 1;
     g.add(shadow);
     this.shadow = shadow;
 
@@ -120,8 +173,9 @@ export class Zombie {
   mesh(g, m) { return new THREE.Mesh(this.geo(g), m); }
 
   buildTorso(body) {
-    const pelvis = this.mesh(new THREE.SphereGeometry(0.34, 10, 8), this.clothMat);
-    pelvis.scale.set(1.05, 0.7, 0.8);
+    const G = this.girth;
+    const pelvis = this.mesh(new THREE.SphereGeometry(0.34, 14, 10), this.clothMat);
+    pelvis.scale.set(1.05 * G, 0.7, 0.8 * G);
     pelvis.position.y = 0.05;
     body.add(pelvis);
 
@@ -130,26 +184,41 @@ export class Zombie {
       this.clothMat
     );
     torso.position.y = 0.62;
-    torso.scale.set(1.0, 1, 0.72);
+    torso.scale.set(G, 1, 0.72 * (G > 1 ? 1.15 : G));
     torso.rotation.x = 0.1;
     body.add(torso);
 
+    // shoulder yoke and collarbones give a human shoulder line, not a bean
+    const yoke = this.mesh(lump(new THREE.SphereGeometry(0.3, 16, 10), 0.03, this.seed + 9), this.clothMat);
+    yoke.position.set(0, 0.95, 0.04);
+    yoke.scale.set(1.55 * G, 0.55, 0.85 * Math.min(G, 1.1));
+    body.add(yoke);
+    if (this.build === 'gaunt') {
+      for (const sx of [-1, 1]) {
+        const clav = this.mesh(new THREE.CapsuleGeometry(0.025, 0.24, 2, 6), BONE_MAT);
+        clav.position.set(0.15 * sx, 1.06, 0.22);
+        clav.rotation.z = Math.PI / 2 + sx * 0.2;
+        body.add(clav);
+      }
+    }
+
     // sunken belly poking out of the shirt, on some
-    if (Math.random() < 0.45) {
-      const gut = this.mesh(lump(new THREE.SphereGeometry(0.24, 12, 10), 0.04, this.seed + 3), this.skinMat);
-      gut.position.set(rand(-0.06, 0.06), 0.3, 0.17);
-      gut.scale.set(0.95, 0.75, 0.6);
+    if (this.build === 'bloated' || Math.random() < 0.45) {
+      const big = this.build === 'bloated' ? 1.25 : 1;
+      const gut = this.mesh(lump(new THREE.SphereGeometry(0.24, 16, 12), 0.05, this.seed + 3), this.skinMat);
+      gut.position.set(rand(-0.06, 0.06), 0.32, 0.15 * big);
+      gut.scale.set(0.95 * big, 0.75 * big, 0.6 * big);
       body.add(gut);
     }
     // open wound
     if (Math.random() < 0.7) {
       const wound = this.mesh(lump(new THREE.SphereGeometry(0.15, 8, 6), 0.03, this.seed + 5), this.woundMat);
       wound.position.set(rand(-0.28, 0.28), rand(0.35, 0.85), rand(0.18, 0.26));
-      wound.scale.set(1, rand(0.7, 1.4), 0.4);
+      wound.scale.set(1, rand(0.7, 1.4), 0.22);
       body.add(wound);
     }
     // torn-open chest with exposed ribs, on some
-    if (Math.random() < 0.35) {
+    if (this.build === 'gaunt' || Math.random() < 0.35) {
       const rx = rand(-0.08, 0.08);
       const patch = this.mesh(new THREE.BoxGeometry(0.34, 0.3, 0.05), this.woundMat);
       patch.position.set(rx, 0.68, 0.24);
@@ -163,7 +232,19 @@ export class Zombie {
       }
     }
 
-    const neck = this.mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.2, 8), this.skinMat);
+    // still wearing the office tie, on some
+    if (!this.isBoss && Math.random() < 0.3) {
+      const tieMat = this.mat(rimmed(new THREE.MeshStandardMaterial({ color: pick(TIES), roughness: 0.6 }), 0.15, 0x9aa8b8));
+      const tie = this.mesh(new THREE.BoxGeometry(0.07, 0.42, 0.02), tieMat);
+      tie.position.set(rand(-0.03, 0.03), 0.86, 0.3 * (G > 1 ? 1.1 : 1));
+      tie.rotation.set(0.25, 0, rand(-0.25, 0.25)); // askew
+      body.add(tie);
+      const knot = this.mesh(new THREE.BoxGeometry(0.06, 0.06, 0.04), tieMat);
+      knot.position.set(0, 1.07, 0.24);
+      body.add(knot);
+    }
+
+    const neck = this.mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.2, 10), this.skinMat);
     neck.position.set(0, 1.15, 0.1);
     neck.rotation.x = 0.35;
     body.add(neck);
@@ -177,7 +258,7 @@ export class Zombie {
 
     // gaunt, narrow skull
     const skull = this.mesh(
-      lump(new THREE.SphereGeometry(0.3, 14, 12), 0.03, this.seed + 1),
+      lump(new THREE.SphereGeometry(0.3, 22, 18), 0.03, this.seed + 1),
       this.skinMat
     );
     skull.scale.set(0.76, 1.02, 0.9);
@@ -195,9 +276,20 @@ export class Zombie {
     head.add(nose);
 
     // upper teeth on the skull, lower on the hanging jaw
-    const upperTeeth = this.mesh(new THREE.BoxGeometry(0.17, 0.035, 0.03), BONE_MAT);
-    upperTeeth.position.set(0, -0.15, 0.22);
-    head.add(upperTeeth);
+    // jagged, broken teeth: one merged mesh per jaw
+    const teeth = (n, w, y, z, down) => {
+      const parts = [];
+      for (let i = 0; i < n; i++) {
+        if (Math.random() < 0.18) continue; // gaps where teeth fell out
+        const h = rand(0.025, 0.05);
+        const t = new THREE.BoxGeometry(0.022, h, 0.022);
+        t.rotateZ(rand(-0.25, 0.25));
+        t.translate(-w / 2 + (i + 0.5) * w / n, y + (down ? -h / 2 : h / 2), z - Math.abs(i - n / 2) * 0.008);
+        parts.push(t);
+      }
+      return parts.length ? new THREE.Mesh(this.geo(mergeGeometries(parts)), BONE_MAT) : new THREE.Group();
+    };
+    head.add(teeth(7, 0.17, -0.135, 0.225, true));
 
     const jawPivot = new THREE.Group();
     jawPivot.position.set(0, -0.12, 0.0);
@@ -206,9 +298,7 @@ export class Zombie {
     const jaw = this.mesh(lump(new THREE.BoxGeometry(0.24, 0.11, 0.24, 3, 2, 3), 0.015, this.seed + 2), this.skinMat);
     jaw.position.set(0, -0.06, 0.07);
     jawPivot.add(jaw);
-    const lowerTeeth = this.mesh(new THREE.BoxGeometry(0.15, 0.03, 0.025), BONE_MAT);
-    lowerTeeth.position.set(0, -0.005, 0.17);
-    jawPivot.add(lowerTeeth);
+    jawPivot.add(teeth(6, 0.15, -0.02, 0.17, false));
     jawPivot.rotation.x = 0.55; // slack, hanging open
 
     // dried blood around the mouth, on some — it fed recently
@@ -219,8 +309,44 @@ export class Zombie {
       jawPivot.add(smear);
     }
 
+    // a patchy scalp with lank strands hanging off the back and sides, on most
+    if (Math.random() < 0.7) {
+      const hairMat = this.mat(rimmed(new THREE.MeshStandardMaterial({ color: pick(HAIR), roughness: 0.75 }), 0.08, 0x9aa8b8));
+      const parts = [];
+      const cap = lump(new THREE.SphereGeometry(0.315, 16, 10, 0, Math.PI * 2, 0, rand(1.1, 1.5)), 0.025, this.seed + 4);
+      cap.rotateX(-0.45); // sits back on the crown, leaving the brow bare
+      cap.scale(0.78, 1.02, 0.92);
+      parts.push(cap);
+      const n = Math.floor(rand(8, 18));
+      for (let i = 0; i < n; i++) {
+        const a = rand(Math.PI * 0.45, Math.PI * 1.55); // around the back, never the face
+        const e = rand(0.05, 0.5);
+        const len = rand(0.12, 0.34);
+        const st = new THREE.CapsuleGeometry(rand(0.012, 0.022), len, 2, 4);
+        st.translate(0, -len / 2, 0);
+        st.rotateX(-Math.cos(a) * 0.25);
+        st.rotateZ(Math.sin(a) * 0.25);
+        st.translate(0.235 * Math.cos(e) * Math.sin(a), 0.3 * Math.sin(e), 0.28 * Math.cos(e) * Math.cos(a));
+        parts.push(st);
+      }
+      head.add(new THREE.Mesh(this.geo(mergeGeometries(parts.map((g) => g.toNonIndexed()))), hairMat));
+    }
+    // a patch of skull showing where the scalp tore away, on some
+    if (Math.random() < 0.3) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const bone = this.mesh(new THREE.SphereGeometry(0.13, 12, 10), BONE_MAT);
+      bone.position.set(0.12 * side, 0.15, 0.02);
+      bone.scale.set(0.6, 0.8, 0.9);
+      head.add(bone);
+      const rim = this.mesh(new THREE.TorusGeometry(0.1, 0.022, 6, 14), this.woundMat);
+      rim.position.set(0.15 * side, 0.15, 0.02);
+      rim.rotation.y = Math.PI / 2;
+      rim.scale.set(0.9, 1.1, 1);
+      head.add(rim);
+    }
+
     for (const s of [-1, 1]) {
-      const socket = this.mesh(new THREE.SphereGeometry(0.075, 8, 6), this.woundMat);
+      const socket = this.mesh(new THREE.SphereGeometry(0.075, 10, 8), this.woundMat);
       socket.position.set(0.105 * s, 0.01, 0.19);
       socket.scale.z = 0.5;
       head.add(socket);
@@ -242,13 +368,14 @@ export class Zombie {
     this.dangling = [this.pose.armMode === 1, this.pose.armMode === 2];
     for (const [i, s] of [[0, -1], [1, 1]]) {
       const shoulder = new THREE.Group();
-      shoulder.position.set(0.46 * s, 0.96 + rand(-0.05, 0.02), 0.1); // uneven droop
+      shoulder.position.set(0.46 * s * this.girth, 0.96 + rand(-0.05, 0.02), 0.1); // uneven droop
       shoulder.rotation.z = s * rand(-0.12, 0.15);
       body.add(shoulder);
       this.shoulders.push(shoulder);
 
       // torn sleeve upper arm, bare rotten forearm
-      const upper = this.mesh(lump(new THREE.CapsuleGeometry(0.09, 0.28, 4, 10), 0.02, this.seed + 6 + s), this.clothMat);
+      const G = this.girth;
+      const upper = this.mesh(lump(new THREE.CapsuleGeometry(0.09 * G, 0.28, 6, 12), 0.02, this.seed + 6 + s), this.clothMat);
       upper.position.y = -0.24;
       shoulder.add(upper);
 
@@ -257,7 +384,7 @@ export class Zombie {
       shoulder.add(elbow);
       this.elbows.push(elbow);
 
-      const forearm = this.mesh(lump(new THREE.CapsuleGeometry(0.07, 0.26, 4, 10), 0.02, this.seed + 8 + s), this.skinMat);
+      const forearm = this.mesh(lump(new THREE.CapsuleGeometry(0.07 * Math.min(G, 1.1), 0.26, 6, 12), 0.02, this.seed + 8 + s), this.skinMat);
       forearm.position.y = -0.2;
       elbow.add(forearm);
 
@@ -300,7 +427,9 @@ export class Zombie {
       body.add(hip);
       this.hips.push(hip);
 
-      const thigh = this.mesh(lump(new THREE.CapsuleGeometry(0.11, 0.3, 4, 10), 0.02, this.seed + 10 + s), this.clothMat);
+      const G = this.girth;
+      hip.position.x *= G;
+      const thigh = this.mesh(lump(new THREE.CapsuleGeometry(0.11 * G, 0.3, 6, 12), 0.02, this.seed + 10 + s), this.clothMat);
       thigh.position.y = -0.26;
       hip.add(thigh);
 
@@ -312,7 +441,7 @@ export class Zombie {
 
       // one trouser leg torn off at random
       const shinMat = Math.random() < 0.4 ? this.skinMat : this.clothMat;
-      const shin = this.mesh(lump(new THREE.CapsuleGeometry(0.085, 0.28, 4, 10), 0.02, this.seed + 12 + s), shinMat);
+      const shin = this.mesh(lump(new THREE.CapsuleGeometry(0.085 * Math.min(G, 1.1), 0.28, 6, 12), 0.02, this.seed + 12 + s), shinMat);
       shin.position.y = -0.22;
       knee.add(shin);
 
@@ -476,6 +605,12 @@ export class Zombie {
     this.stateT = 0;
   }
 
+  // a landed letter: flare the flesh and jolt the body
+  hit() {
+    this.hitFlash = 1;
+    this.flinch = 1;
+  }
+
   die() {
     if (this.state === 'dying') return;
     this.setState('dying');
@@ -508,6 +643,11 @@ export class Zombie {
     }
 
     const ok = (p) => !p.userData.shed; // don't animate parts that were shot off
+
+    if (this.hitFlash > 0) {
+      this.hitFlash = Math.max(0, this.hitFlash - dt * 6);
+      for (const m of this.hitMats) m.userData.hit.value = this.hitFlash * this.hitFlash;
+    }
 
     switch (this.state) {
       case 'rise': {
@@ -660,6 +800,15 @@ export class Zombie {
         if (this.stateT >= 0.5) { this.body.rotation.z = 0; this.setState('idle'); }
         break;
       }
+    }
+
+    // bullet flinch: snap backwards, recover over a fraction of a second
+    if (this.flinch > 0) {
+      this.flinch = Math.max(0, this.flinch - dt * 5);
+      const f = this.flinch * this.flinch;
+      this.body.rotation.x -= f * 0.35;
+      this.body.rotation.z += f * 0.15 * Math.sin(this.seed);
+      if (ok(this.head)) this.head.rotation.x -= f * 0.5;
     }
 
     // reanimated nerves: sudden head-snap / shoulder-jerk twitches

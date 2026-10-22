@@ -402,3 +402,128 @@ export function facadeMaps(styleIndex) {
 
   return { albedo, emissive, normal: normalCanvas(height, W, H, 3) };
 }
+
+// ---------------------------------------------------------------------------
+// Dead skin: pale, near-neutral base (the zombie's tint multiplies it) with
+// mottling, bruising, branching veins, weeping sores and grime.
+export function skinMaps(S = 256) {
+  const cv = canvas(S), c = cv.getContext('2d');
+  const height = new Float32Array(S * S);
+  const mott = makeFbm(4, 4), pore = makeFbm(32, 2);
+  const img = c.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const m = mott(x / S, y / S), p = pore(x / S, y / S);
+      const k = 0.78 + m * 0.38 - p * 0.12;
+      const i = (y * S + x) * 4;
+      img.data[i] = Math.min(255, 238 * k); img.data[i + 1] = Math.min(255, 242 * k); img.data[i + 2] = Math.min(255, 226 * k); img.data[i + 3] = 255;
+      height[y * S + x] = m * 0.3 + p * 0.5;
+    }
+  }
+  c.putImageData(img, 0, 0);
+  // bruises: purple cores, yellow-green rims
+  for (let n = 0; n < 7; n++) {
+    const x = rand(0, S), y = rand(0, S), r = rand(10, 34);
+    const g = c.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(70,30,70,0.55)');
+    g.addColorStop(0.6, 'rgba(90,100,40,0.25)');
+    g.addColorStop(1, 'rgba(90,100,40,0)');
+    c.fillStyle = g;
+    c.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  // veins: wandering, forking lines, raised in the height map
+  const vein = (x, y, a, len, w) => {
+    c.strokeStyle = `rgba(40,50,80,${0.35 + w * 0.2})`;
+    c.lineWidth = w;
+    c.beginPath();
+    c.moveTo(x, y);
+    for (let s = 0; s < len; s++) {
+      a += rand(-0.5, 0.5);
+      x += Math.cos(a) * 3; y += Math.sin(a) * 3;
+      c.lineTo(x, y);
+      const hx = ((x | 0) % S + S) % S, hy = ((y | 0) % S + S) % S;
+      height[hy * S + hx] += 0.6 * w;
+      if (Math.random() < 0.06 && w > 0.6) vein(x, y, a + rand(-1, 1), len / 2, w * 0.6);
+    }
+    c.stroke();
+  };
+  for (let n = 0; n < 9; n++) vein(rand(0, S), rand(0, S), rand(0, 6.28), rand(12, 30), rand(0.8, 1.6));
+  // sores: dark wet centres with an inflamed rim, pitted
+  for (let n = 0; n < 14; n++) {
+    const x = rand(0, S), y = rand(0, S), r = rand(2, 7);
+    c.fillStyle = 'rgba(150,60,50,0.5)';
+    c.beginPath(); c.arc(x, y, r * 1.6, 0, Math.PI * 2); c.fill();
+    c.fillStyle = 'rgba(50,8,8,0.9)';
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    for (let yy = -r; yy <= r; yy++) for (let xx = -r; xx <= r; xx++) {
+      if (xx * xx + yy * yy > r * r) continue;
+      const hx = (((x + xx) | 0) % S + S) % S, hy = (((y + yy) | 0) % S + S) % S;
+      height[hy * S + hx] -= 0.8;
+    }
+  }
+  // grime and old blood smears
+  for (let n = 0; n < 10; n++) {
+    c.fillStyle = Math.random() < 0.5 ? 'rgba(40,30,20,0.25)' : 'rgba(90,12,10,0.35)';
+    c.beginPath();
+    c.ellipse(rand(0, S), rand(0, S), rand(6, 24), rand(3, 10), rand(0, 3), 0, Math.PI * 2);
+    c.fill();
+  }
+  blur(height, S, S, 1);
+  return { albedo: cv, normal: normalCanvas(height, S, S, 4) };
+}
+
+// Grave clothes: woven fabric, light-neutral so the cloth colour tints it,
+// with sweat and mud stains, blood spatter and torn holes.
+export function clothMaps(S = 256) {
+  const cv = canvas(S), c = cv.getContext('2d');
+  const height = new Float32Array(S * S);
+  const stain = makeFbm(4, 4);
+  const img = c.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const weave = ((x % 4 < 2) !== (y % 4 < 2)) ? 1 : 0.82;
+      const s = stain(x / S, y / S);
+      const k = weave * (0.55 + s * 0.6) * (y > S * 0.7 ? 0.8 : 1);
+      const i = (y * S + x) * 4;
+      img.data[i] = Math.min(255, 225 * k); img.data[i + 1] = Math.min(255, 220 * k); img.data[i + 2] = Math.min(255, 210 * k); img.data[i + 3] = 255;
+      height[y * S + x] = weave * 0.5 + s * 0.3;
+    }
+  }
+  c.putImageData(img, 0, 0);
+  // blood spatter: a burst of droplets around each splash
+  for (let n = 0; n < 6; n++) {
+    const x = rand(0, S), y = rand(0, S);
+    c.fillStyle = 'rgba(80,6,6,0.75)';
+    c.beginPath(); c.ellipse(x, y, rand(6, 16), rand(8, 26), rand(0, 3), 0, Math.PI * 2); c.fill();
+    for (let d = 0; d < 14; d++) {
+      const a = rand(0, 6.28), r = rand(8, 30);
+      c.beginPath(); c.arc(x + Math.cos(a) * r, y + Math.sin(a) * r, rand(0.8, 2.5), 0, Math.PI * 2); c.fill();
+    }
+  }
+  // mud caked toward the hem, torn holes
+  for (let n = 0; n < 8; n++) {
+    c.fillStyle = 'rgba(48,38,24,0.4)';
+    c.beginPath(); c.ellipse(rand(0, S), rand(S * 0.6, S), rand(10, 30), rand(5, 14), 0, 0, Math.PI * 2); c.fill();
+  }
+  for (let n = 0; n < 5; n++) {
+    const x = rand(0, S), y = rand(0, S), rx = rand(4, 10), ry = rand(2, 6);
+    c.fillStyle = '#0a0706';
+    c.beginPath(); c.ellipse(x, y, rx, ry, rand(0, 3), 0, Math.PI * 2); c.fill();
+    for (let yy = -ry; yy <= ry; yy++) for (let xx = -rx; xx <= rx; xx++) {
+      const hx = (((x + xx) | 0) % S + S) % S, hy = (((y + yy) | 0) % S + S) % S;
+      height[hy * S + hx] = 0;
+    }
+  }
+  blur(height, S, S, 1);
+  return { albedo: cv, normal: normalCanvas(height, S, S, 2.5) };
+}
+
+// soft round blob: contact shadows, glows
+export function radialCanvas(stops, S = 128) {
+  const cv = canvas(S), c = cv.getContext('2d');
+  const g = c.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  for (const [o, col] of stops) g.addColorStop(o, col);
+  c.fillStyle = g;
+  c.fillRect(0, 0, S, S);
+  return cv;
+}
