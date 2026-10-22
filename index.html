@@ -101,6 +101,25 @@
     .screen .small { font-size: 13px; color: #5a6478; margin-top: 26px; }
     @keyframes blink { 50% { opacity: 0.15; } }
 
+    #title { background: radial-gradient(ellipse at 50% 45%, rgba(4,6,12,0.35) 0%, rgba(4,6,12,0.7) 60%, rgba(2,3,6,0.92) 100%); }
+    #title h1 { animation: flicker 7s infinite; }
+    #title h1 .die { position: relative; display: inline-block; animation: flicker 3.3s infinite 1s; }
+    /* blood running off the letters */
+    #title h1 .die::after {
+      content: ''; position: absolute; left: 12%; right: 8%; top: 82%; height: 0.6em; pointer-events: none;
+      background:
+        linear-gradient(#c01818, #c01818) 8% 0 / 5px 70% no-repeat,
+        linear-gradient(#a01010, #a01010) 38% 0 / 4px 45% no-repeat,
+        linear-gradient(#c01818, #c01818) 71% 0 / 6px 90% no-repeat,
+        linear-gradient(#901010, #901010) 92% 0 / 3px 30% no-repeat;
+      filter: drop-shadow(0 0 6px rgba(255,40,40,0.7));
+      animation: drip 4s ease-in infinite;
+      transform-origin: top;
+    }
+    @keyframes drip { 0% { transform: scaleY(0.2); opacity: 1; } 80% { transform: scaleY(1); opacity: 1; } 100% { transform: scaleY(1.05); opacity: 0; } }
+    @keyframes flicker { 0%, 100% { opacity: 1; } 92% { opacity: 1; } 93% { opacity: 0.55; } 94% { opacity: 1; } 96% { opacity: 0.7; } 97% { opacity: 1; } }
+    #title p { text-shadow: 0 1px 3px rgba(0,0,0,0.9); }
+
     #gameover h1 { color: var(--blood); text-shadow: 0 0 24px rgba(255,59,59,0.9); }
 
     /* title settings */

@@ -952,6 +952,14 @@ export class Game {
       cam.position.y += rand(-s, s);
     }
     cam.lookAt(0, 1.7, this.baseZ - 12);
+    if (this.state === 'title') {
+      // attract-screen flythrough: drift up the street, drifting toward the canal
+      const t = this.time;
+      const z = -10 - ((t * 1.6) % 300);
+      cam.position.set(2.5 + Math.sin(t * 0.09) * 3.5, 2.6 + Math.sin(t * 0.13) * 0.8, z);
+      cam.lookAt(6 + Math.sin(t * 0.07) * 6, 1.6, z - 20);
+    }
+    this.gun.group.visible = this.state !== 'title';
     this.fovKick *= Math.exp(-dt * 7);
     cam.fov = 60 + this.fovKick;
     cam.updateProjectionMatrix();
