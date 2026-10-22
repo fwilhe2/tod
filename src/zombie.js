@@ -20,7 +20,7 @@ const SHADOW_MAT = new THREE.MeshBasicMaterial({
   map: new THREE.CanvasTexture(radialCanvas([[0, 'rgba(0,0,0,0.75)'], [0.5, 'rgba(0,0,0,0.4)'], [1, 'rgba(0,0,0,0)']])),
   transparent: true, depthWrite: false,
 });
-const BONE_MAT = new THREE.MeshStandardMaterial({ color: 0xc4bca0, roughness: 0.45 });
+const BONE_MAT = new THREE.MeshStandardMaterial({ color: 0x8c8370, roughness: 0.5 });
 const SHADOW_GEO = new THREE.PlaneGeometry(1.9, 1.9);
 
 // Moonlit rim + hit flash, injected into each zombie surface so silhouettes
@@ -165,6 +165,7 @@ export class Zombie {
     g.add(shadow);
     this.shadow = shadow;
 
+    g.traverse((o) => { if (o.isMesh && o !== shadow) o.castShadow = true; });
     this.makeLabel();
   }
 
@@ -225,9 +226,10 @@ export class Zombie {
       patch.rotation.x = 0.12;
       body.add(patch);
       for (let r = 0; r < 3; r++) {
-        const rib = this.mesh(new THREE.BoxGeometry(0.3, 0.028, 0.03), BONE_MAT);
-        rib.position.set(rx, 0.58 + r * 0.09, 0.27);
-        rib.rotation.x = 0.12;
+        // ribs curve around the chest instead of sitting on it like bars
+        const rib = this.mesh(new THREE.TorusGeometry(0.16 - r * 0.01, 0.014, 4, 10, Math.PI * 0.75), BONE_MAT);
+        rib.position.set(rx, 0.56 + r * 0.09, 0.14);
+        rib.rotation.set(Math.PI / 2 + 0.15, 0, Math.PI * 0.125);
         body.add(rib);
       }
     }

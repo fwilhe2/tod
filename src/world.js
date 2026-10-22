@@ -62,14 +62,25 @@ export function buildWorld(scene, sfx, renderer) {
   // lights
   const hemi = new THREE.HemisphereLight(0x3d4a70, 0x141824, 1.3);
   scene.add(hemi);
-  const moonlight = new THREE.DirectionalLight(0x9fb4ff, 1.0);
-  moonlight.position.set(-30, 60, -40);
+  // moon and lightning both cast shadows from a box that rides with the camera
+  const shadowed = (light) => {
+    light.castShadow = true;
+    light.shadow.mapSize.set(1024, 1024);
+    const c = light.shadow.camera;
+    c.left = -20; c.right = 20; c.top = 20; c.bottom = -20; c.near = 1; c.far = 160;
+    light.shadow.bias = -0.0006;
+    light.shadow.normalBias = 0.04;
+    scene.add(light.target);
+    return light;
+  };
+  const MOON_DIR = new THREE.Vector3(-30, 60, -40).normalize();
+  const moonlight = shadowed(new THREE.DirectionalLight(0x9fb4ff, 1.3));
   scene.add(moonlight);
   const lamp = new THREE.PointLight(0xffb45e, 80, 60, 1.8); // follows camera
   scene.add(lamp);
   // lightning strobe
-  const bolt = new THREE.DirectionalLight(0xcdd8ff, 0);
-  bolt.position.set(20, 80, -60);
+  const bolt = shadowed(new THREE.DirectionalLight(0xcdd8ff, 0));
+  const boltDir = new THREE.Vector3(20, 80, -60).normalize();
   scene.add(bolt);
 
   // wet cobbled street: PBR setts, glossy puddles that mirror the scene
@@ -107,6 +118,7 @@ export function buildWorld(scene, sfx, renderer) {
   const street = new THREE.Mesh(new THREE.PlaneGeometry(24, 500), streetMat);
   street.rotation.x = -Math.PI / 2;
   street.position.set(0, 0, -200);
+  street.receiveShadow = true;
   scene.add(street);
 
   // canal (right side): black water mirroring the far bank, rippled by waves
@@ -265,6 +277,11 @@ export function buildWorld(scene, sfx, renderer) {
       t += dt;
       waterTime.value = t;
       lamp.position.set(camPos.x + 2, 4.2, camPos.z - 8);
+      // keep both shadow boxes centred on the fight ahead of the camera
+      moonlight.target.position.set(camPos.x, 0, camPos.z - 14);
+      moonlight.position.copy(moonlight.target.position).addScaledVector(MOON_DIR, 80);
+      bolt.target.position.copy(moonlight.target.position);
+      bolt.position.copy(bolt.target.position).addScaledVector(boltDir, 80);
 
       // crossfade the district atmosphere
       const mk = 1 - Math.exp(-dt * 0.8);
@@ -353,7 +370,7 @@ export function buildWorld(scene, sfx, renderer) {
       if (nextStrike <= 0) {
         strike = 1;
         nextStrike = rand(mood.bolt[0], mood.bolt[1]);
-        bolt.position.set(rand(-60, 60), 80, camPos.z - rand(30, 90));
+        boltDir.set(rand(-60, 60), 80, -rand(30, 90)).normalize();
         if (sfx) setTimeout(() => sfx.thunder(), rand(350, 1400));
       }
       if (strike > 0) {

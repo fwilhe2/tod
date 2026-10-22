@@ -13,12 +13,21 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 400);
 camera.position.set(0, 1.6, 0);
 scene.add(camera); // the gun rides on the camera
+
+// the agent's shoulder lamp: lights the faces of whatever is coming and
+// sweeps a cold glint across the puddles
+const shoulderLamp = new THREE.SpotLight(0xe0e2f0, 32, 42, 0.5, 0.9, 1.4);
+shoulderLamp.position.set(0.45, 0.3, 0.1);
+shoulderLamp.target.position.set(-0.3, -1.3, -12);
+camera.add(shoulderLamp, shoulderLamp.target);
 
 const sfx = new Sfx();
 const world = buildWorld(scene, sfx, renderer);
@@ -44,6 +53,7 @@ window.addEventListener('resize', () => {
 });
 
 const timer = new THREE.Timer();
+let frames = 0;
 renderer.setAnimationLoop((time) => {
   timer.update(time);
   const rawDt = Math.min(timer.getDelta(), 0.05);
@@ -51,6 +61,7 @@ renderer.setAnimationLoop((time) => {
     const dt = game.advance(rawDt); // bullet-time may dilate the frame
     world.update(dt, camera.position);
   }
-  world.renderReflection(camera);
+  // (skip the mirror until the shadow maps exist, or it samples empty ones)
+  if (frames++ > 0) world.renderReflection(camera);
   post.render(rawDt, timer.getElapsed());
 });
