@@ -42,10 +42,13 @@ const coneFrag = /* glsl */`
   varying float vY;
   varying vec3 vN, vV;
   void main() {
-    float facing = abs(dot(normalize(vN), normalize(vV)));
-    float a = pow(vY, 1.4) * pow(facing, 2.0) * smoothstep(0.0, 0.3, vY);
-    a *= exp(-length(vV) * 0.035) * strength;
-    gl_FragColor = vec4(color * a, 1.0);
+    // clamp: vY can dip a hair below 0 at the rim, and pow() of a negative
+    // is NaN on real GPUs - which bloom then smears across the whole frame
+    float y = clamp(vY, 0.0, 1.0);
+    float facing = clamp(abs(dot(normalize(vN), normalize(vV))), 0.0, 1.0);
+    float a = pow(y, 1.4) * facing * facing * smoothstep(0.0, 0.3, y);
+    a *= exp(-length(vV) * 0.035) * max(strength, 0.0);
+    gl_FragColor = vec4(color * max(a, 0.0), 1.0);
   }
 `;
 
