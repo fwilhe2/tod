@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildWorld } from './world.js';
 import { Game } from './game.js';
-import { Gun } from './gun.js';
+import { Gun, makeGunEnv } from './gun.js';
 import { Sfx } from './audio.js';
 import { createPost } from './post.js';
 import { NO_REFLECT_LAYER } from './reflect.js';
@@ -32,6 +32,7 @@ camera.add(shoulderLamp, shoulderLamp.target);
 const sfx = new Sfx();
 const world = buildWorld(scene, sfx, renderer);
 const gun = new Gun(camera);
+gun.setEnv(makeGunEnv(renderer));
 // the first-person gun lives on its own layer so puddles don't reflect it
 camera.layers.enable(NO_REFLECT_LAYER);
 gun.group.traverse((o) => { if (o.isMesh) o.layers.set(NO_REFLECT_LAYER); });

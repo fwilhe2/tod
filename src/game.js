@@ -18,7 +18,7 @@ function rand(a, b) { return a + Math.random() * (b - a); }
 const $ = (id) => document.getElementById(id);
 
 const BULLET_GEO = new THREE.CapsuleGeometry(0.03, 0.55, 3, 6);
-const SHELL_GEO = new THREE.BoxGeometry(0.018, 0.018, 0.05);
+const SHELL_GEO = new THREE.CylinderGeometry(0.008, 0.008, 0.032, 10).rotateX(Math.PI / 2);
 const RING_GEO = new THREE.RingGeometry(0.3, 0.38, 28);
 const BULLET_SPEED = 75;
 
@@ -661,8 +661,8 @@ export class Game {
   }
 
   spawnShell() {
-    const m = new THREE.Mesh(SHELL_GEO, new THREE.MeshBasicMaterial({
-      color: 0xd8a848, transparent: true,
+    const m = new THREE.Mesh(SHELL_GEO, new THREE.MeshStandardMaterial({
+      color: 0xd8a848, metalness: 1, roughness: 0.25, envMap: this.gun.envMap ?? null, transparent: true,
     }));
     this.gun.ejectWorldPos(m.position);
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
