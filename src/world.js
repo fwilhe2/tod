@@ -21,6 +21,59 @@ function glowTexture(inner, mid) {
   return new THREE.CanvasTexture(cv);
 }
 
+// Soft volumetric cone of lamplight hanging in the rain: brightest at the
+// lamp and down the middle of the beam, fading to nothing at its edges.
+const coneVert = /* glsl */`
+  uniform float height;
+  varying float vY;
+  varying vec3 vN, vV;
+  void main() {
+    vY = position.y / height + 0.5;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vN = normalize(normalMatrix * normal);
+    vV = -mv.xyz;
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const coneFrag = /* glsl */`
+  uniform vec3 color;
+  uniform float strength;
+  varying float vY;
+  varying vec3 vN, vV;
+  void main() {
+    float facing = abs(dot(normalize(vN), normalize(vV)));
+    float a = pow(vY, 1.4) * pow(facing, 2.0) * smoothstep(0.0, 0.3, vY);
+    a *= exp(-length(vV) * 0.035) * strength;
+    gl_FragColor = vec4(color * a, 1.0);
+  }
+`;
+
+// Jagged lightning: midpoint-displaced trunk with a few forking branches.
+function boltSegments(top, bottom, out, depth = 0, width = 3.2) {
+  const pts = [top, bottom];
+  for (let pass = 0; pass < 6; pass++) {
+    const next = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const len = a.distanceTo(b);
+      const mid = a.clone().lerp(b, rand(0.4, 0.6));
+      mid.x += rand(-0.22, 0.22) * len;
+      mid.z += rand(-0.1, 0.1) * len;
+      next.push(mid, b);
+    }
+    pts.splice(0, pts.length, ...next);
+  }
+  for (let i = 1; i < pts.length; i++) {
+    out.push({ a: pts[i - 1], b: pts[i], w: width * (1 - (i / pts.length) * 0.5) });
+    if (depth < 2 && Math.random() < 0.08) {
+      const len = top.distanceTo(bottom) * rand(0.15, 0.35) / (depth + 1);
+      const end = pts[i].clone().add(new THREE.Vector3(rand(-1, 1) * len, -len * rand(0.6, 1), rand(-0.3, 0.3) * len));
+      boltSegments(pts[i], end, out, depth + 1, width * 0.45);
+    }
+  }
+  return out;
+}
+
 // Raindrop rings in standing water: two jittered cell layers, each cell
 // fires an expanding ring on its own clock. Returns a slope in xz.
 const RIPPLE_GLSL = /* glsl */`
@@ -185,7 +238,15 @@ export function buildWorld(scene, sfx, renderer) {
   const lampGlows = [];
   const ironGeos = [], bulbGeos = [];
   const put = (list, g, x, y, z) => { g.translate(x, y, z); list.push(g); };
-  const addLight = (pos, size) => {
+  const addLight = (pos, size, cone) => {
+    const coneMat = new THREE.ShaderMaterial({
+      uniforms: { color: { value: new THREE.Color(0xffb468) }, strength: { value: 1.0 }, height: { value: cone[1] } },
+      vertexShader: coneVert, fragmentShader: coneFrag,
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const beam = new THREE.Mesh(new THREE.ConeGeometry(cone[0], cone[1], 20, 1, true), coneMat);
+    beam.position.set(pos.x, pos.y - cone[1] / 2 + 0.1, pos.z);
+    scene.add(beam);
     const halo = new THREE.Sprite(new THREE.SpriteMaterial({
       map: lampGlowTex, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, opacity: 0.5,
@@ -193,7 +254,7 @@ export function buildWorld(scene, sfx, renderer) {
     halo.position.copy(pos);
     halo.scale.setScalar(size);
     scene.add(halo);
-    lampGlows.push({ halo, pos, phase: rand(0, 20), rnd: Math.random(), k: 1 });
+    lampGlows.push({ halo, beam, pos, phase: rand(0, 20), rnd: Math.random(), k: 1 });
   };
   for (let z = 0; z > -440; z -= 22) {
     const x = 11.5;
@@ -203,14 +264,14 @@ export function buildWorld(scene, sfx, renderer) {
     put(ironGeos, new THREE.CylinderGeometry(0.05, 0.2, 0.25, 4), x, 3.95, z); // lantern cage
     put(ironGeos, new THREE.ConeGeometry(0.3, 0.32, 4), x, 4.42, z);          // hood
     put(bulbGeos, new THREE.CylinderGeometry(0.17, 0.12, 0.38, 4), x, 4.07, z);
-    addLight(new THREE.Vector3(x, 4.05, z), 2.8);
+    addLight(new THREE.Vector3(x, 4.05, z), 2.8, [2.4, 4.1]);
   }
   for (const p of city.lanterns) {
     const s = Math.sign(p.x) || 1; // bracket juts out from the wall
     put(ironGeos, new THREE.BoxGeometry(0.6, 0.05, 0.05), p.x - s * 0.15, p.y + 0.42, p.z);
     put(ironGeos, new THREE.ConeGeometry(0.2, 0.22, 4), p.x + s * 0.12, p.y + 0.3, p.z);
     put(bulbGeos, new THREE.CylinderGeometry(0.12, 0.09, 0.3, 4), p.x + s * 0.12, p.y, p.z);
-    addLight(new THREE.Vector3(p.x + s * 0.12, p.y, p.z), 2.2);
+    addLight(new THREE.Vector3(p.x + s * 0.12, p.y, p.z), 2.2, [1.7, 3.9]);
   }
   scene.add(new THREE.Mesh(mergeGeometries(ironGeos.map((g) => g.toNonIndexed())), ironMat));
   scene.add(new THREE.Mesh(mergeGeometries(bulbGeos.map((g) => g.toNonIndexed())), bulbMat));
@@ -308,6 +369,36 @@ export function buildWorld(scene, sfx, renderer) {
   emberPts.layers.set(NO_REFLECT_LAYER);
   scene.add(emberPts);
 
+  // ---- visible lightning bolt, rebuilt for each strike ----
+  const boltMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(0xc8d4ff).multiplyScalar(4), transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide,
+  });
+  const boltMesh = new THREE.Mesh(new THREE.BufferGeometry(), boltMat);
+  boltMesh.frustumCulled = false;
+  boltMesh.visible = false;
+  scene.add(boltMesh);
+  const buildBolt = (camPos) => {
+    const top = new THREE.Vector3(camPos.x + rand(-60, 60), 160, camPos.z - rand(150, 230));
+    const bottom = top.clone().add(new THREE.Vector3(rand(-40, 40), -top.y + rand(0, 15), rand(-20, 20)));
+    const segs = boltSegments(top, bottom, []);
+    const verts = [];
+    const view = new THREE.Vector3(), side = new THREE.Vector3(), dir = new THREE.Vector3();
+    for (const { a, b, w } of segs) {
+      // ribbon quad turned to face the camera
+      view.copy(a).sub(camPos).normalize();
+      side.crossVectors(dir.copy(b).sub(a), view).normalize().multiplyScalar(w / 2);
+      const a0 = a.clone().sub(side), a1 = a.clone().add(side), b0 = b.clone().sub(side), b1 = b.clone().add(side);
+      verts.push(...a0.toArray(), ...a1.toArray(), ...b1.toArray(), ...a0.toArray(), ...b1.toArray(), ...b0.toArray());
+    }
+    boltMesh.geometry.dispose();
+    boltMesh.geometry = new THREE.BufferGeometry();
+    boltMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    boltDir.copy(top).sub(camPos).normalize();
+    boltDir.y = Math.abs(boltDir.y) + 0.6;
+    boltDir.normalize();
+  };
+
   // ---- lightning state ----
   let strike = 0;              // 1 → 0 while a flash decays
   let nextStrike = rand(6, 14);
@@ -315,6 +406,7 @@ export function buildWorld(scene, sfx, renderer) {
   let t = 0;
   return {
     mirror,
+    strike() { nextStrike = 0; },
     renderReflection(camera) {
       mirror.render(scene, camera, [street, water]);
     },
@@ -416,6 +508,7 @@ export function buildWorld(scene, sfx, renderer) {
           ? Math.max(0.05, 0.4 + n * 0.42)
           : 0.5 + n * 0.06;
         lg.k = lg.halo.material.opacity / 0.5;
+        lg.beam.material.uniforms.strength.value = 1.0 * lg.k;
       }
       // hand the pooled lights to the nearest lamps ahead of the camera
       const near = lampGlows
@@ -433,7 +526,9 @@ export function buildWorld(scene, sfx, renderer) {
       if (nextStrike <= 0) {
         strike = 1;
         nextStrike = rand(mood.bolt[0], mood.bolt[1]);
-        boltDir.set(rand(-60, 60), 80, -rand(30, 90)).normalize();
+        // most strikes fork down visibly behind the rooftops; some are sheet lightning
+        if (Math.random() < 0.65) { buildBolt(camPos); boltMesh.visible = true; }
+        else { boltDir.set(rand(-60, 60), 80, -rand(30, 90)).normalize(); boltMesh.visible = false; }
         if (sfx) setTimeout(() => sfx.thunder(), rand(350, 1400));
       }
       if (strike > 0) {
@@ -441,10 +536,12 @@ export function buildWorld(scene, sfx, renderer) {
         // double-pulse flicker
         const k = strike * (0.55 + 0.45 * Math.sin(strike * 34));
         bolt.intensity = k * 4.5;
+        boltMat.opacity = Math.min(1, k * 1.6);
         scene.fog.color.lerpColors(cur.bg, BG_FLASH, k * 0.55);
         sky.uniforms.flash.value = k;
       } else {
         bolt.intensity = 0;
+        boltMesh.visible = false;
         scene.fog.color.copy(cur.bg);
         sky.uniforms.flash.value = 0;
       }
