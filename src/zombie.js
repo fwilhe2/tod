@@ -20,23 +20,49 @@ const SHADOW_MAT = new THREE.MeshBasicMaterial({
   map: new THREE.CanvasTexture(radialCanvas([[0, 'rgba(0,0,0,0.75)'], [0.5, 'rgba(0,0,0,0.4)'], [1, 'rgba(0,0,0,0)']])),
   transparent: true, depthWrite: false,
 });
-const BONE_MAT = new THREE.MeshStandardMaterial({ color: 0x8c8370, roughness: 0.5 });
 const SHADOW_GEO = new THREE.PlaneGeometry(1.9, 1.9);
 
-// Moonlit rim + hit flash, injected into each zombie surface so silhouettes
-// separate from the dark street and every landed letter flares the body.
+// Moonlit rim + hit flash + burn-away dissolve, injected into each zombie
+// surface: the rim separates silhouettes from the dark street, every landed
+// letter flares the body, and on death the flesh burns away from a noise
+// front with a glowing ember edge.
 function rimmed(mat, rim, rimColor) {
   mat.userData.hit = { value: 0 };
+  mat.userData.dissolve = { value: 0 };
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.rimColor = { value: new THREE.Color(rimColor).multiplyScalar(rim) };
     shader.uniforms.hitFlash = mat.userData.hit;
-    shader.fragmentShader = 'uniform vec3 rimColor;\nuniform float hitFlash;\n' + shader.fragmentShader.replace(
+    shader.uniforms.dissolve = mat.userData.dissolve;
+    shader.vertexShader = 'varying vec3 vBurnPos;\n' + shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\n vBurnPos = position;'
+    );
+    shader.fragmentShader = `uniform vec3 rimColor;
+      uniform float hitFlash, dissolve;
+      varying vec3 vBurnPos;
+      float bHash(vec3 p) { return fract(sin(dot(p, vec3(17.1, 113.3, 71.7))) * 43758.5453); }
+      float bNoise(vec3 p) {
+        vec3 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(bHash(i), bHash(i + vec3(1, 0, 0)), f.x), mix(bHash(i + vec3(0, 1, 0)), bHash(i + vec3(1, 1, 0)), f.x), f.y),
+                   mix(mix(bHash(i + vec3(0, 0, 1)), bHash(i + vec3(1, 0, 1)), f.x), mix(bHash(i + vec3(0, 1, 1)), bHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+      }
+      ` + shader.fragmentShader.replace(
+      '#include <clipping_planes_fragment>',
+      `#include <clipping_planes_fragment>
+       float burnN = bNoise(vBurnPos * 14.0) * 0.6 + bNoise(vBurnPos * 41.0) * 0.4;
+       if (burnN < dissolve) discard;
+       float burnEdge = dissolve > 0.0 ? 1.0 - smoothstep(0.0, 0.07, burnN - dissolve) : 0.0;`
+    ).replace(
       '#include <emissivemap_fragment>',
       `#include <emissivemap_fragment>
        {
          float ndv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
          float rim = pow(1.0 - ndv, 4.0);
          totalEmissiveRadiance += rimColor * rim + vec3(1.0, 0.82, 0.7) * hitFlash * (0.25 + rim);
+         // char just behind the front, white-hot embers right on it
+         diffuseColor.rgb *= 1.0 - burnEdge * 0.85;
+         totalEmissiveRadiance += mix(vec3(2.5, 0.5, 0.08), vec3(5.0, 3.2, 1.2), burnEdge * burnEdge) * burnEdge;
        }`
     );
   };
@@ -45,18 +71,9 @@ function rimmed(mat, rim, rimColor) {
 }
 
 // soft radial glow texture, shared by all eye glows
-const GLOW_TEX = (() => {
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 64;
-  const c = cv.getContext('2d');
-  const g = c.createRadialGradient(32, 32, 2, 32, 32, 32);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.4, 'rgba(255,255,255,0.4)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  c.fillStyle = g;
-  c.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(cv);
-})();
+const GLOW_TEX = new THREE.CanvasTexture(radialCanvas([
+  [0, 'rgba(255,255,255,1)'], [0.4, 'rgba(255,255,255,0.4)'], [1, 'rgba(255,255,255,0)'],
+], 64));
 
 function rand(a, b) { return a + Math.random() * (b - a); }
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -130,14 +147,19 @@ export class Zombie {
     this.woundMat = this.mat(rimmed(new THREE.MeshStandardMaterial({
       color: 0x4a0808, emissive: 0x1a0202, roughness: 0.22, metalness: 0,
     }), rimK * 0.5, 0xff6060));
+    // bone is per-zombie so it can burn away with the rest
+    const BONE_MAT = this.mat(rimmed(new THREE.MeshStandardMaterial({ color: 0x8c8370, roughness: 0.5 }), 0.15, rimC));
+    this.boneMat = BONE_MAT;
     this.hitMats = [this.skinMat, this.clothMat, this.woundMat];
     this.hitFlash = 0;
     const eyeColor = this.isBoss ? 0xff4030 : special === 'coffee' ? 0xffc040 : 0xc8d86a;
-    this.eyeMat = this.mat(new THREE.MeshBasicMaterial({ color: new THREE.Color(eyeColor).multiplyScalar(2.5) }));
+    this.eyeBase = new THREE.Color(eyeColor).multiplyScalar(2.5);
+    this.eyeMat = this.mat(new THREE.MeshBasicMaterial({ color: this.eyeBase.clone() }));
     this.glowMat = this.mat(new THREE.SpriteMaterial({
       map: GLOW_TEX, color: eyeColor, transparent: true,
       blending: THREE.AdditiveBlending, depthWrite: false, opacity: this.isBoss ? 0.85 : 0.6,
     }));
+    this.glowBase = this.glowMat.opacity;
 
     const g = new THREE.Group();
     g.position.set(x, 0, z);
@@ -171,6 +193,7 @@ export class Zombie {
 
   geo(g) { this.geos.push(g); return g; }
   mat(m) { this.mats.push(m); return m; }
+  get burnMats() { return this.mats.filter((m) => m.userData.dissolve); }
   mesh(g, m) { return new THREE.Mesh(this.geo(g), m); }
 
   buildTorso(body) {
@@ -196,7 +219,7 @@ export class Zombie {
     body.add(yoke);
     if (this.build === 'gaunt') {
       for (const sx of [-1, 1]) {
-        const clav = this.mesh(new THREE.CapsuleGeometry(0.025, 0.24, 2, 6), BONE_MAT);
+        const clav = this.mesh(new THREE.CapsuleGeometry(0.025, 0.24, 2, 6), this.boneMat);
         clav.position.set(0.15 * sx, 1.06, 0.22);
         clav.rotation.z = Math.PI / 2 + sx * 0.2;
         body.add(clav);
@@ -227,7 +250,7 @@ export class Zombie {
       body.add(patch);
       for (let r = 0; r < 3; r++) {
         // ribs curve around the chest instead of sitting on it like bars
-        const rib = this.mesh(new THREE.TorusGeometry(0.16 - r * 0.01, 0.014, 4, 10, Math.PI * 0.75), BONE_MAT);
+        const rib = this.mesh(new THREE.TorusGeometry(0.16 - r * 0.01, 0.014, 4, 10, Math.PI * 0.75), this.boneMat);
         rib.position.set(rx, 0.56 + r * 0.09, 0.14);
         rib.rotation.set(Math.PI / 2 + 0.15, 0, Math.PI * 0.125);
         body.add(rib);
@@ -289,7 +312,7 @@ export class Zombie {
         t.translate(-w / 2 + (i + 0.5) * w / n, y + (down ? -h / 2 : h / 2), z - Math.abs(i - n / 2) * 0.008);
         parts.push(t);
       }
-      return parts.length ? new THREE.Mesh(this.geo(mergeGeometries(parts)), BONE_MAT) : new THREE.Group();
+      return parts.length ? new THREE.Mesh(this.geo(mergeGeometries(parts)), this.boneMat) : new THREE.Group();
     };
     head.add(teeth(7, 0.17, -0.135, 0.225, true));
 
@@ -336,7 +359,7 @@ export class Zombie {
     // a patch of skull showing where the scalp tore away, on some
     if (Math.random() < 0.3) {
       const side = Math.random() < 0.5 ? -1 : 1;
-      const bone = this.mesh(new THREE.SphereGeometry(0.13, 12, 10), BONE_MAT);
+      const bone = this.mesh(new THREE.SphereGeometry(0.13, 12, 10), this.boneMat);
       bone.position.set(0.12 * side, 0.15, 0.02);
       bone.scale.set(0.6, 0.8, 0.9);
       head.add(bone);
@@ -780,8 +803,13 @@ export class Zombie {
         this.knees[1].rotation.x = 0.15 + s * 0.8;
         if (ok(this.head)) this.head.rotation.z = this.pose.headTilt + s * 0.6;
         if (ok(this.jaw)) this.jaw.rotation.x = 0.55 + s * 0.6;
-        if (p > 0.6) g.position.y -= dt * 2.2; // sink
-        if (p > 1.3) this.dead = true;
+        // burn away from a noise front: flesh chars, embers glow, then it's gone
+        const burn = Math.min(1, Math.max(0, (p - 0.4) / 1.1));
+        for (const m of this.burnMats) m.userData.dissolve.value = burn * 1.02;
+        this.eyeMat.color.setScalar(0).lerp(this.eyeBase, 1 - Math.min(1, burn * 2));
+        this.glowMat.opacity = this.glowBase * (1 - Math.min(1, burn * 2));
+        this.shadow.scale.setScalar(1 - burn);
+        if (p > 1.6) this.dead = true;
         break;
       }
       case 'idle': { // boss loiter

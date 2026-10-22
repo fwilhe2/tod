@@ -200,7 +200,7 @@ export class Fx {
     pool.mesh.instanceColor.needsUpdate = true;
   }
 
-  spark(pos, n = 10, color = 0xffc870, speed = 6) {
+  spark(pos, n = 10, color = 0xffc870, speed = 6, gravity = 9, ttl = 0.35) {
     const col = new THREE.Color(color);
     for (let k = 0; k < n; k++) {
       const it = this.sparks[this.sparkNext];
@@ -210,7 +210,8 @@ export class Fx {
       it.vel = new THREE.Vector3(rand(-1, 1), rand(-0.3, 1), rand(-1, 1)).normalize().multiplyScalar(rand(0.4, 1) * speed);
       it.col = col.clone().multiplyScalar(rand(1.5, 3));
       it.life = 0;
-      it.ttl = rand(0.12, 0.35);
+      it.ttl = rand(ttl * 0.35, ttl);
+      it.gravity = gravity;
     }
   }
 
@@ -304,7 +305,7 @@ export class Fx {
       if (!it.alive) { P.fill(0, j, j + 6); C.fill(0, j, j + 6); continue; }
       it.life += dt;
       if (it.life > it.ttl) { it.alive = false; P.fill(0, j, j + 6); C.fill(0, j, j + 6); continue; }
-      it.vel.y -= 9 * dt;
+      it.vel.y -= it.gravity * dt;
       it.pos.addScaledVector(it.vel, dt);
       const k = 1 - it.life / it.ttl;
       P[j] = it.pos.x; P[j + 1] = it.pos.y; P[j + 2] = it.pos.z;

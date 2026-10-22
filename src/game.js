@@ -942,6 +942,12 @@ export class Game {
     for (let i = this.zombies.length - 1; i >= 0; i--) {
       const z = this.zombies[i];
       const ev = z.update(dt, this.camera.position);
+      // a burning corpse sheds embers and smoke
+      if (z.state === 'dying' && z.stateT > 0.4 && z.stateT < 1.5) {
+        const at = z.body.localToWorld(new THREE.Vector3(rand(-0.4, 0.4), rand(0, 1.3), rand(-0.3, 0.3)));
+        if (Math.random() < 0.7) this.fx.spark(at, 2, 0xff7a28, 1.4, -2.5, 1.1);
+        if (Math.random() < 0.12) this.fx.puff(at, { color: 0x2a2624, size: 0.4, grow: 3, ttl: 1.6, opacity: 0.35 });
+      }
       if (ev === 'splash') this.spawnSplash(z.group.position);
       if (ev === 'strike') {
         if (!harmless && (this.state === 'playing' || this.state === 'intro' || this.state === 'advance')) {
