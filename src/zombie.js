@@ -658,7 +658,7 @@ export class Zombie {
         if (!this.splashed && p > 0.12) { this.splashed = true; event = 'splash'; }
         if (p < 1.3) {
           const q = p / 1.3;
-          this.group.position.y = -1.75 + q * 2.45; // up to the quay top
+          this.group.position.y = -1.75 + q * 2.0; // up onto the kerb
           this.body.rotation.x = this.hunch + 0.9 * (1 - q); // unfolding upright
           for (const i of [0, 1]) {
             this.shoulders[i].rotation.x = -2.6 + q * (Math.PI / 2 + 1.1); // arms haul upward
@@ -666,7 +666,7 @@ export class Zombie {
           if (ok(this.head)) this.head.rotation.x = -0.3 + q * 0.5; // face tips up first
         } else if (p < 2.1) {
           const q = (p - 1.3) / 0.8;
-          this.group.position.y = 0.7 * (1 - q); // step down off the quay
+          this.group.position.y = 0.25 * (1 - q); // step down off the kerb
           this.group.position.x += (11.7 - this.group.position.x) * 3 * dt;
           this.body.rotation.x = this.hunch;
           const w = this.t * 5;

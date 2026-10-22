@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createSky } from './sky.js';
 import { buildCity } from './city.js';
+import { buildCanal } from './canal.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cobbleMaps, puddleMap, tex } from './textures.js';
 import { createMirror, REFLECT_GLSL, NO_REFLECT_LAYER } from './reflect.js';
@@ -219,13 +220,8 @@ export function buildWorld(scene, sfx, renderer) {
   scene.add(water);
   const basePos = waterGeo.attributes.position.array.slice();
 
-  // quay edge
-  const quay = new THREE.Mesh(
-    new THREE.BoxGeometry(1.4, 1.0, 500),
-    new THREE.MeshLambertMaterial({ color: 0x232838 })
-  );
-  quay.position.set(12.6, 0.2, -200);
-  scene.add(quay);
+  // embankments, bridges, mooring poles, gondolas
+  const canal = buildCanal(scene);
 
   // canal houses on both banks
   const city = buildCity(scene);
@@ -416,6 +412,7 @@ export function buildWorld(scene, sfx, renderer) {
     update(dt, camPos) {
       t += dt;
       waterTime.value = t;
+      canal.update(t);
       lamp.position.set(camPos.x + 2, 4.2, camPos.z - 8);
       // keep both shadow boxes centred on the fight ahead of the camera
       moonlight.target.position.set(camPos.x, 0, camPos.z - 14);
