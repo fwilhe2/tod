@@ -515,7 +515,11 @@ export class Game {
     this.spawnRing(head);
     this.spawnPopup(`+${pts}`, head);
     this.fovKick = Math.min(this.fovKick + 2.5, 8);
-    if (this.post) this.post.punch = 1;
+    if (this.post) {
+      this.post.punch = 1;
+      // point-blank kills spatter the lens
+      if (z.group.position.distanceTo(this.camera.position) < 4.5) this.post.splat('spatter');
+    }
     // the last letter takes the head clean off
     const skull = z.decapitate();
     if (skull) { this.flingPart(skull, 1.5); this.spawnFountain(z); }
@@ -564,7 +568,7 @@ export class Game {
     this.hp--;
     this.shakeT = 0.45;
     this.sfx.hurt();
-    if (this.post) this.post.hurt = 1;
+    if (this.post) { this.post.hurt = 1; this.post.splat('hurt'); }
     this.hud.redflash.classList.add('on');
     setTimeout(() => this.hud.redflash.classList.remove('on'), 180);
     this.updateHUD();
