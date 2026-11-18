@@ -49,6 +49,7 @@ export class Sfx {
   // intensity 0: silence. 1: sub pulse. 2: + creeping arp. 3: + hats & dissonance.
   startMusic() {
     this.intensity = 0;
+    this.mode = 'game';
     this.musicGain = this.ctx.createGain();
     this.musicGain.gain.value = 0.0001;
     this.musicGain.connect(this.master);
@@ -87,7 +88,7 @@ export class Sfx {
   }
 
   pumpMusic() {
-    const spb = 60 / 92 / 2; // 8th notes at 92 bpm
+    const spb = 60 / (this.mode === 'title' ? 132 : 92) / 2; // 8th notes
     while (this.mnext < this.now() + 0.35) {
       this.playStep(this.mstep, this.mnext);
       this.mstep = (this.mstep + 1) % 32;
@@ -96,6 +97,7 @@ export class Sfx {
   }
 
   playStep(s, t) {
+    if (this.mode === 'title') { this.playTitleStep(s, t); return; }
     const I = this.intensity;
     if (!I) return;
     const bar = Math.floor(s / 8) % 4;
@@ -112,8 +114,44 @@ export class Sfx {
     }
   }
 
+  // Attract-mode theme: a minor-key 90s cabinet loop. Am F C G over a
+  // driving bass, with a square-wave lead every other pass.
+  playTitleStep(s, t) {
+    const bar = Math.floor(s / 8) % 4;
+    const roots = [55, 43.65, 65.41, 49];            // A1 F1 C2 G1
+    const chords = [[0, 3, 7], [0, 4, 7], [0, 4, 7], [0, 4, 7]];
+    const root = roots[bar];
+    const semi = (f, n) => f * Math.pow(2, n / 12);
+    // octave-pumping bass on every eighth
+    this.mtone(t, 0.16, 'sawtooth', root * (s % 2 ? 2 : 1), 0.12);
+    if (s % 4 === 0) this.mtone(t, 0.25, 'sine', 110, 0.55, 40);    // kick
+    if (s % 8 === 4) this.mnoise(t, 0.14, 1800, 0.16);               // snare
+    if (s % 2 === 1) this.mnoise(t, 0.03, 7000, 0.04);               // hat
+    // arpeggiated chord
+    const ch = chords[bar];
+    this.mtone(t, 0.12, 'triangle', semi(root * 8, ch[s % 3]), 0.05);
+    // lead melody on the second half of the loop
+    this.titlePass = (this.titlePass ?? 0) + (s === 0 ? 1 : 0);
+    if (this.titlePass % 2 === 0) {
+      const mel = [12, null, 10, 12, 15, null, 12, 10, 8, null, 7, 8, 10, null, 8, 7,
+        12, null, 10, 12, 15, null, 17, 15, 14, null, 12, 10, 12, null, null, null];
+      const n = mel[s];
+      if (n !== null) this.mtone(t, 0.2, 'square', semi(220, n), 0.035);
+    }
+  }
+
+  setMode(mode) {
+    if (!this.ctx || this.mode === mode) return;
+    this.mode = mode;
+    this.mstep = 0;
+    this.titlePass = 0;
+    this.mnext = this.now() + 0.05;
+    if (mode === 'title') this.musicGain.gain.setTargetAtTime(0.7, this.now(), 0.3);
+    else this.musicGain.gain.setTargetAtTime(this.intensity > 0 ? 0.85 : 0.0001, this.now(), 0.4);
+  }
+
   setIntensity(i) {
-    if (!this.ctx || i === this.intensity) return;
+    if (!this.ctx || i === this.intensity || this.mode === 'title') return;
     this.intensity = i;
     this.musicGain.gain.setTargetAtTime(i > 0 ? 0.85 : 0.0001, this.now(), 1.2);
   }
@@ -283,6 +321,79 @@ export class Sfx {
     const t = this.now();
     [523, 659, 784].forEach((f, i) =>
       this.tone(t + i * 0.07, 0.3, 'triangle', f, null, 0.15, 0.6));
+  }
+
+  // ---- arcade cabinet noises ----
+  coin() {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.tone(t, 0.08, 'square', 988, null, 0.15);
+    this.tone(t + 0.08, 0.45, 'square', 1319, null, 0.15, 0.2);
+  }
+
+  // the logo slams onto the screen
+  stab() {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.noise(t, 0.6, 'lowpass', 4000, 0.6, 100, 0.6);
+    [110, 130.8, 164.8, 220].forEach((f) => {
+      this.tone(t, 1.6, 'sawtooth', f, f * 0.98, 0.12, 0.7);
+      this.tone(t, 1.6, 'square', f * 1.005, f, 0.05, 0.7);
+    });
+    this.tone(t, 0.9, 'sine', 80, 30, 0.8);
+  }
+
+  tick() {
+    if (!this.ctx) return;
+    this.tone(this.now(), 0.03, 'square', 1760, null, 0.06);
+  }
+
+  // stage clear: a bright major run
+  fanfare() {
+    if (!this.ctx) return;
+    const t = this.now();
+    [523, 659, 784, 1047, 784, 1047].forEach((f, i) =>
+      this.tone(t + i * 0.11, i === 5 ? 0.7 : 0.16, 'square', f, null, 0.08, 0.4));
+    [130.8, 196, 261.6].forEach((f, i) => this.tone(t + i * 0.22, 0.5, 'triangle', f, null, 0.2, 0.3));
+  }
+
+  powerup() {
+    if (!this.ctx) return;
+    const t = this.now();
+    for (let i = 0; i < 8; i++) this.tone(t + i * 0.04, 0.09, 'square', 440 * Math.pow(2, i / 4), null, 0.07, 0.4);
+  }
+
+  explosion(big = 1) {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.noise(t, 1.2 * big, 'lowpass', 1800, 0.8, 60, 0.6);
+    this.noise(t, 0.25, 'highpass', 2000, 0.3, 500);
+    this.tone(t, 0.8, 'sine', 90, 25, 0.8);
+  }
+
+  freeze() {
+    if (!this.ctx) return;
+    const t = this.now();
+    for (let i = 0; i < 10; i++) this.tone(t + i * 0.035, 0.5, 'sine', 2600 - i * 160, null, 0.04, 0.9);
+    this.noise(t, 0.8, 'highpass', 6000, 0.12, 3000, 0.8);
+  }
+
+  extraLife() {
+    if (!this.ctx) return;
+    const t = this.now();
+    [784, 988, 1175, 1568].forEach((f, i) => this.tone(t + i * 0.08, 0.2, 'square', f, null, 0.08, 0.3));
+  }
+
+  whoosh() {
+    if (!this.ctx) return;
+    this.noise(this.now(), 0.5, 'bandpass', 500, 0.25, 2500, 0.3);
+  }
+
+  stomp() {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.tone(t, 0.25, 'sine', 60, 28, 0.35);
+    this.noise(t, 0.12, 'lowpass', 300, 0.15, 80);
   }
 
   bell() {

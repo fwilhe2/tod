@@ -22,6 +22,7 @@ const GradeShader = {
     lowHP: { value: 0 },    // 0..1 persistent danger tint
     tSplat: { value: null }, // blood on the lens (alpha = coverage)
     splat: { value: 0 },
+    crt: { value: 0 },      // arcade-monitor mode: curvature, scanlines, shadow mask
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -32,7 +33,7 @@ const GradeShader = {
   `,
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse, tSplat;
-    uniform float time, hurt, punch, lowHP, splat;
+    uniform float time, hurt, punch, lowHP, splat, crt;
     uniform vec2 resolution;
     varying vec2 vUv;
 
@@ -46,7 +47,7 @@ const GradeShader = {
       vec2 c = vUv - 0.5;
       float r2 = dot(c, c);
       // subtle barrel distortion, bulging on kill punches
-      vec2 uv = 0.5 + c * (1.0 - (0.035 + punch * 0.05) * r2 * 4.0);
+      vec2 uv = 0.5 + c * (1.0 - (0.035 + crt * 0.045 + punch * 0.05) * r2 * 4.0);
 
       // chromatic aberration grows toward the frame edge
       float ca = (0.0012 + hurt * 0.012 + punch * 0.006) * (0.3 + r2 * 3.0);
@@ -90,7 +91,22 @@ const GradeShader = {
       float g = hash(vUv * resolution + fract(time * 13.7) * 100.0) - 0.5;
       col += g * mix(0.075, 0.03, l);
 
-      gl_FragColor = vec4(col, 1.0);
+      if (crt > 0.0) {
+        // tube glass: scanlines, an RGB shadow mask, rounded black corners
+        float scan = 0.5 + 0.5 * sin(gl_FragCoord.y * 1.5708);
+        col *= 1.0 - crt * 0.22 * scan * (1.0 - l * 0.6);
+        float m = mod(gl_FragCoord.x, 3.0);
+        vec3 mask = m < 1.0 ? vec3(1.12, 0.94, 0.94) : m < 2.0 ? vec3(0.94, 1.12, 0.94) : vec3(0.94, 0.94, 1.12);
+        col *= mix(vec3(1.0), mask, crt * 0.6);
+        vec2 q = abs(uv - 0.5) * 2.0;
+        vec2 cq = max(q - 0.94, 0.0) / 0.06;
+        float corner = 1.0 - smoothstep(0.75, 1.0, length(cq));
+        float inside = step(q.x, 1.0) * step(q.y, 1.0);
+        col *= mix(1.0, corner * inside, crt);
+        col *= 1.0 + crt * 0.08; // a touch of phosphor glow to pay back the mask
+      }
+
+      gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
     }
   `,
 };
@@ -180,6 +196,7 @@ export function createPost(renderer, scene, camera) {
     hurt: 0,
     punch: 0,
     lowHP: 0,
+    crt: 0,
     splatK: 0,
     splat(kind = 'hurt') {
       paintSplat(splatCtx, 512, kind);
@@ -198,6 +215,7 @@ export function createPost(renderer, scene, camera) {
       this.splatK = Math.max(0, this.splatK - dt * 0.35);
       u.splat.value = Math.min(1, this.splatK * 1.5);
       u.time.value = time;
+      u.crt.value = this.crt;
       u.hurt.value = this.hurt;
       u.punch.value = this.punch;
       u.lowHP.value += (this.lowHP - u.lowHP.value) * Math.min(1, dt * 3);

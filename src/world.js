@@ -147,7 +147,12 @@ const MOODS = [
   { fog: 0.020, bg: 0x05070d, hemi: 0.55, moonC: 0x8f98b8, rain: 0.34, flickerAll: 1, bolt: [8, 16], cloud: 0.3, mist: 1.2 },  // 3: the blackout
   { fog: 0.018, bg: 0x140b10, hemi: 1.0, moonC: 0xff7a5a, rain: 0.4, flickerAll: 0, bolt: [7, 15], cloud: 0.52, mist: 0.9 },    // 4: the blood moon
   { fog: 0.021, bg: 0x0b1020, hemi: 1.2, moonC: 0xdfe8ff, rain: 0.6, flickerAll: 0, bolt: [2.5, 6], cloud: 0.22, mist: 0.7 },   // 5: the storm
-  { fog: 0.024, bg: 0x081209, hemi: 0.95, moonC: 0xbfe8c8, rain: 0.3, flickerAll: 0.5, bolt: [6, 12], cloud: 0.34, mist: 1.8 }, // boss: the counting house
+  { fog: 0.024, bg: 0x081209, hemi: 0.95, moonC: 0xbfe8c8, rain: 0.3, flickerAll: 0.5, bolt: [6, 12], cloud: 0.34, mist: 1.8 }, // 5 boss: the counting house
+  { fog: 0.026, bg: 0x0a1424, hemi: 1.25, moonC: 0xe8f0ff, rain: 0.18, flickerAll: 0, bolt: [10, 22], cloud: 0.6, mist: 2.8 },  // 6 boss: the gondolier's mist
+  { fog: 0.028, bg: 0x0a140a, hemi: 1.0, moonC: 0xb8ff9a, rain: 0.22, flickerAll: 0.3, bolt: [9, 18], cloud: 0.42, mist: 2.2 }, // 7: the toxic quarter
+  { fog: 0.022, bg: 0x1a0c06, hemi: 1.05, moonC: 0xffa060, rain: 0.15, flickerAll: 0.6, bolt: [6, 12], cloud: 0.36, mist: 1.4 }, // 8 boss: the kitchen fire
+  { fog: 0.025, bg: 0x141010, hemi: 0.85, moonC: 0xffc8a0, rain: 0.1, flickerAll: 0.2, bolt: [12, 24], cloud: 0.25, mist: 1.6 }, // 9: ash fall
+  { fog: 0.02, bg: 0x1c0608, hemi: 0.9, moonC: 0xff4a3a, rain: 0.5, flickerAll: 0.4, bolt: [2, 5], cloud: 0.3, mist: 1 },        // 10: red alert
 ];
 
 export function buildWorld(scene, sfx, renderer) {

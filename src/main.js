@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import '@fontsource/press-start-2p/400.css';
+import '@fontsource/metal-mania/400.css';
 import { buildWorld } from './world.js';
 import { Game } from './game.js';
 import { Gun, makeGunEnv } from './gun.js';
@@ -6,6 +8,7 @@ import { Zombie } from './zombie.js';
 import { Sfx } from './audio.js';
 import { createPost } from './post.js';
 import { NO_REFLECT_LAYER } from './reflect.js';
+import { FIGHTS } from './levels.js';
 
 const app = document.getElementById('app');
 
@@ -47,7 +50,8 @@ if (new URLSearchParams(location.search).has('debug')) window.game = game;
 // then a film-stock grade pass on top
 const post = createPost(renderer, scene, camera);
 game.post = post;
-if (window.game) Object.assign(window, { renderer, world, post, scene, gun });
+post.crt = game.settings.crt ? 1 : 0;
+if (window.game) Object.assign(window, { renderer, world, post, scene, gun, __mods: { Zombie, FIGHTS } });
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
